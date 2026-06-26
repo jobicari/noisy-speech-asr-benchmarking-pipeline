@@ -157,11 +157,6 @@ ENV/
 env.bak/
 venv.bak/
 
-# Credentials
-*key.json
-*credentials.json
-credentials.json
-
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -259,25 +254,11 @@ outputs/
 runs/
 wandb/
 mlruns/
-results/
-results/*
-notebooks/results/*
-notebooks/mlruns/*
-notebooks/mlartifacts/*
 
-# pickle files
-*.pkl
-*.pickle
-*.joblib
-
-#mlflow db
-mlflow.db
 
 
 # =========================
 # OS / misc
 # =========================
 Thumbs.db
-images/*
-notebooks/images/*
  

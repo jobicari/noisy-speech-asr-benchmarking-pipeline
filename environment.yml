@@ -56,7 +56,6 @@ dependencies:
   - certifi=2026.6.17=pyhd8ed1ab_0
   - cffi=2.0.0=py313h89bd988_0
   - charset-normalizer=3.4.7=pyhd8ed1ab_0
-  - click=8.4.1=pyhc90fa1f_0
   - comm=0.2.3=pyhe01879c_0
   - contourpy=1.3.3=py313h2af2deb_4
   - cpython=3.13.14=py313hd8ed1ab_100
@@ -85,6 +84,7 @@ dependencies:
   - fqdn=1.5.1=pyhd8ed1ab_1
   - freetype=2.14.3=hce30654_1
   - fribidi=1.0.16=hc919400_0
+  - fsspec=2026.6.0=pyhd8ed1ab_0
   - gdk-pixbuf=2.44.5=h5a2fd1c_0
   - gettext=0.25.1=h3dcc1bd_0
   - gettext-tools=0.25.1=h493aca8_0
@@ -229,7 +229,6 @@ dependencies:
   - libxml2-16=2.15.2=h5ef1a60_0
   - libzlib=1.3.2=hb4cf58c_0
   - llvm-openmp=22.1.8=hc7d1edf_0
-  - llvmlite=0.47.0=py313h691f2cf_1
   - lz4-c=1.10.0=h286801f_1
   - markdown-it-py=4.2.0=pyhd8ed1ab_0
   - markupsafe=3.0.3=py313h65a2061_1
@@ -238,7 +237,6 @@ dependencies:
   - matplotlib-inline=0.2.2=pyhd8ed1ab_0
   - mdurl=0.1.2=pyhd8ed1ab_1
   - mistune=3.3.2=pyhcf101f3_0
-  - mlx=0.31.2=py313h0bb27bf_0
   - mpc=1.4.0=h169892a_0
   - mpfr=4.2.2=h6bc93b0_0
   - mpg123=1.32.9=hf642e45_0
@@ -267,7 +265,6 @@ dependencies:
   - optree=0.19.1=py313h5c29297_0
   - orc=2.3.0=hd11884d_0
   - overrides=7.7.0=pyhd8ed1ab_1
-  - packaging=26.0=py313hca03da5_0
   - pandas=3.0.3=py313h1188861_0
   - pandocfilters=1.5.0=pyhd8ed1ab_0
   - pango=1.56.4=h875632e_0
@@ -331,7 +328,6 @@ dependencies:
   - sdl2=2.32.56=h248ca61_0
   - sdl3=3.4.10=h6fa9c73_0
   - send2trash=2.1.0=pyh5552912_1
-  - setuptools=80.10.2=py313hca03da5_0
   - shaderc=2025.5=hf31e910_1
   - shellingham=1.5.4=pyhd8ed1ab_2
   - six=1.17.0=pyhe01879c_1
@@ -391,19 +387,24 @@ dependencies:
       - aiohttp==3.14.1
       - aiosignal==1.4.0
       - annotated-types==0.7.0
+      - click==8.4.2
       - frozenlist==1.8.0
-      - fsspec==2026.4.0
       - interegular==0.3.3
+      - llvmlite==0.47.0
       - lm-format-enforcer==0.11.3
+      - mlx==0.21.1
       - mlx-metal==0.31.2
       - mlx-whisper==0.4.3
       - more-itertools==11.1.0
       - multidict==6.7.1
+      - packaging==26.2
       - propcache==0.5.2
       - pydantic==2.13.4
       - pydantic-core==2.46.4
       - sentencepiece==0.2.1
+      - setuptools==81.0.0
       - tiktoken==0.13.0
+      - torch==2.12.1
       - torchcodec==0.14.0
       - typing-inspection==0.4.2
       - yarl==1.24.2

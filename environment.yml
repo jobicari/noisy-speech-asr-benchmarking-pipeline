@@ -256,8 +256,6 @@ dependencies:
   - notebook=7.6.0=pyhcf101f3_0
   - notebook-shim=0.2.4=pyhd8ed1ab_1
   - numba=0.65.1=py313h3ca053b_1
-  - numpy=2.4.6=py313heca761d_0
-  - numpy-base=2.4.6=py313h23175f9_0
   - openfst=1.8.4=ha393de7_1
   - openh264=2.6.0=hb5b2745_0
   - openjpeg=2.5.4=hd9e9057_0
@@ -397,10 +395,14 @@ dependencies:
       - mlx-whisper==0.4.3
       - more-itertools==11.1.0
       - multidict==6.7.1
+      - numpy==2.5.0
+      - numpy-typing-compat==20260602.2.5
+      - optype==0.18.0
       - packaging==26.2
       - propcache==0.5.2
       - pydantic==2.13.4
       - pydantic-core==2.46.4
+      - scipy-stubs==1.18.0.0
       - sentencepiece==0.2.1
       - setuptools==81.0.0
       - tiktoken==0.13.0

@@ -13,6 +13,7 @@ dependencies:
   - numpy
   - pandas
   - matplotlib
+  - seaborn
   - scikit-learn
   - librosa
   - ffmpeg

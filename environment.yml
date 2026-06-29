@@ -20,7 +20,7 @@ dependencies:
   - jupyter
   - jupyterlab
 
-  # Machine Learning and Apple Silicon Specifics
+  # Machine Learning and Apple Silicon Specificsy
   - pip:
       - mlx
       - mlx-whisper
@@ -30,3 +30,4 @@ dependencies:
       - transformers
       - datasets
       - jiwer
+      - gradio

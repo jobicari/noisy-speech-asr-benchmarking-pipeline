@@ -259,6 +259,8 @@ notebooks/results/*
 
 # pickle files
 *.pkl
+*.pickle
+*.joblib
 
 
 

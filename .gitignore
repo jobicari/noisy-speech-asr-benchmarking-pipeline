@@ -254,6 +254,13 @@ outputs/
 runs/
 wandb/
 mlruns/
+results/
+notebooks/results/*
+
+# pickle files
+*.pkl
+*.pickle
+*.joblib
 
 
 

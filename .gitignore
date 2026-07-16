@@ -256,12 +256,16 @@ wandb/
 mlruns/
 results/
 notebooks/results/*
+notebooks/mlruns/*
+notebooks/mlartifacts/*
 
 # pickle files
 *.pkl
 *.pickle
 *.joblib
 
+#mlflow db
+mlflow.db
 
 
 # =========================

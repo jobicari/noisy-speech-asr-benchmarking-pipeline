@@ -22,8 +22,9 @@ dependencies:
   - jupyter
   - jupyterlab
 
-  # Machine Learning and Apple Silicon Specificsy
+  # Machine Learning and Apple Silicon Specifics
   - pip:
+      - mlflow>=2.15.0
       - mlx
       - mlx-whisper
       - torch
@@ -33,3 +34,4 @@ dependencies:
       - datasets
       - jiwer
       - gradio
+

@@ -31,4 +31,5 @@ dependencies:
       - datasets
       - jiwer
       - gradio
+      - modal
 

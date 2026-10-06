@@ -16,7 +16,7 @@ from itertools import islice
 config = Config()
 
 
-def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False):
+def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small=config.MODEL_SMALL):
     """
     Automatically detect if Apple Silicon and tries to load mlx_whisper if available
     If not available, falls back to HuggingFace pipeline and setup device accordingly ("cuda", "mps", "cpu")
@@ -33,8 +33,8 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False):
             print("Apple Silicon Detected. Initializing MLX.")
 
             def mlx_transcriber(audio_array):
-                # Using MLX community pre-converted weights of the turbo model
-                if config.MODEL_SMALL:
+                # Using MLX community model
+                if model_small:
                     result = mlx_transcribe(audio_array, path_or_hf_repo=config.MLX_SMALL_MODEL_NAME)
                     loaded_model_name = config.MLX_SMALL_MODEL_NAME
                     # model = mlx_load_model(config.MLX_SMALL_MODEL_NAME)
@@ -58,7 +58,7 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False):
     print(f"Standard architecture detected. Initializing Hugging Face pipeline on device: {device}")
     dtype = torch.float32 if device=="mps" else torch.float16
 
-    if config.MODEL_SMALL:
+    if model_small:
         model_id = config.HF_TRANSFORMER_SMALL_MODEL_NAME
     else:
         model_id = config.HF_TRANSFORMER_LARGE_MODEL_NAME
@@ -122,32 +122,9 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
         audio_array = sample["audio"]["array"]
         sample_rate = sample["audio"]["sampling_rate"]
 
-        for corr_type in corruption_type:
-
+        for corr_type, corr_fn in corruption_type.items():
             counter+=1
-            # --------------------------------------
-            # Corruption / Degradation Application
-            # --------------------------------------
-            if corr_type is None:
-                corr_audio_array = audio_array
-            elif corr_type=="none":
-                corr_audio_array = audio_array
-            elif corr_type=="whitenoise": # implement the default white noise if no corruption_type parameter is passed
-                corr_audio_array = add_white_noise(audio_array, target_snr)
-            elif corr_type=="synth-verb":
-                corr_audio_array = add_synthetic_reverberation(audio_array, mix=0.5)
-            elif corr_type=="real-verb":
-                ir, sr = extract_ir_from_mit_dataset(ir_idx=251)
-                corr_audio_array =  add_real_reverberation(audio_array, ir, mix=0.5)
-            elif corr_type=="dropout":
-                corr_audio_array = add_smart_audio_dropouts(audio_array)
-            elif corr_type==["whitenoise", "synth-verb", "dropout"]:
-                corr_audio_array = add_white_noise(audio_array, target_snr)
-                corr_audio_array = add_synthetic_reverberation(corr_audio_array, mix=0.5)
-                corr_audio_array = add_smart_audio_dropouts(corr_audio_array)
-            else:
-                corr_audio_array = audio_array
-
+            corr_audio_array = corr_fn(audio_array)
 
             ref = cleanup_pipeline(sample["text"])
             hyp = cleanup_pipeline(transcriber(corr_audio_array)['text'])
@@ -194,7 +171,7 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
             # -----------------------------------------------------------------------------
             # Store results and references into list for further analysis
             # -----------------------------------------------------------------------------
-            sample_analysis = analyze_asr_audio_health(corr_audio_array)
+            sample_analysis = analyze_asr_audio_health(corr_audio_array, sample_rate)
 
             results.append({"idx": sample['id'],
                             "corr_type": corr_type,
@@ -241,7 +218,7 @@ def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=Non
     """
     print(f"===== Run Batch Inference on {n} samples =====")
     print(f"run_label: {run_label}")
-    print(f"corruption_type: {corruption_type}")
+    # print(f"corruption_type: {corruption_type}")
 
     if corruption_type is None:
         corruption_type = ["none"]

@@ -293,9 +293,9 @@ def band_limit(audio, sr=16_000, lowcut=None, highcut=None, order=6):
         )
 
     else:
-        return audio.copy()
+        return np.ascontiguousarray(audio)
 
-    return sosfiltfilt(sos, audio)
+    return np.ascontiguousarray(sosfiltfilt(sos, audio))
 
 
 def hard_clip_ratio(audio, threshold=0.8):

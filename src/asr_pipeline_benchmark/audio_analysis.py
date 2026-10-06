@@ -1,9 +1,9 @@
 import numpy as np
 import librosa
 from typing import Dict, Any
+import soundfile as sf
 
-
-def analyze_asr_audio_health(y: np.ndarray, frame_length: int = 2048, hop_length: int = 512) -> Dict[str, Any]:
+def analyze_asr_audio_health(y: np.ndarray, sr: int, frame_length: int = 2048, hop_length: int = 512) -> Dict[str, Any]:
     """
     Calculates audio metrics and flags structural issues that degrade ASR
     Assumes y is a 1D float32 numpy array
@@ -28,7 +28,21 @@ def analyze_asr_audio_health(y: np.ndarray, frame_length: int = 2048, hop_length
     peak_max_dbfs = 20 * np.log10(np.maximum(peak_max_linear, eps))
 
     # ----------------------------------------
-    # 2. ASR Specific Diagnostic Metrics
+    # 2. Spectral Metrics
+    # ----------------------------------------
+    # MFCCs
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, n_fft=frame_length, hop_length=hop_length)
+    mfccs_mean = np.mean(mfccs, axis=1)
+    mfccs_std = np.std(mfccs, axis=1)
+
+    # Spectral Flatness
+    spect_flat = librosa.feature.spectral_flatness(y=y, n_fft=frame_length, hop_length=hop_length)
+    sf_mean = np.mean(spect_flat)
+    sf_std = np.std(spect_flat)
+
+
+    # ----------------------------------------
+    # 3. ASR Specific Diagnostic Metrics
     # ----------------------------------------
     # DC Offset: Should be very close to 0.0
     dc_offset = np.mean(y)
@@ -41,7 +55,7 @@ def analyze_asr_audio_health(y: np.ndarray, frame_length: int = 2048, hop_length
     zcr_mean = np.mean(zcr_frames)
 
     # ----------------------------------------
-    # 3. Automated ASR Health Flags
+    # 4. Automated ASR Health Flags
     # ----------------------------------------
     # Clip Detection: Values Tracking exactly at 1.0 or -1.0
     is_clipping = np.sum(abs_y >=.99) > (len(y) * 0.001)  # More than 0.1% of sampels
@@ -70,7 +84,11 @@ def analyze_asr_audio_health(y: np.ndarray, frame_length: int = 2048, hop_length
             "crest_factor_db": round(float(crest_factor_db), round_factor),
             "min_zcr": round(float(zcr_min), round_factor),
             "std_zcr": round(float(zcr_std), round_factor),
-            "mean_zcr": round(float(zcr_mean), round_factor)
+            "mean_zcr": round(float(zcr_mean), round_factor),
+            "mfccs_mean": [round(x, round_factor) for x in mfccs_mean.tolist()],
+            "mfccs_std": [round(x, round_factor) for x in mfccs_std.tolist()],
+            "sf_mean": sf_mean,
+            "sf_std": sf_std
         },
         "asr_flags": {
             "action_required": bool(is_clipping or is_too_quiet or is_pure_noise or (abs(dc_offset) > .01)),

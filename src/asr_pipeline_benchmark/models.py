@@ -89,7 +89,7 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False):
 
 
 def get_model_backend(model) -> str:
-    """Returns 'mlx' or 'torch' based on the instantiated model object"""
+    """Helper Function that returns 'mlx' or 'torch' based on the instantiated model object"""
     module_name = getattr(model, "__name__", "")
 
     if "mlx" in module_name:
@@ -101,7 +101,10 @@ def get_model_backend(model) -> str:
 
 
 def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None):   # no noise
-    """"""
+    """Function that runs the inference loop on a batch of audio samples
+        with a list of corruption type and run error metrics (WER, CER)
+        and return the results
+    """
     print(f" === RUN BENCHMARK TEST started ===")
     if corruption_type is None:
         corruption_type = ["none"]

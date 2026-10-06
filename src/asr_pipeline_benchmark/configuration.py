@@ -5,6 +5,11 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
+    # Datasets
+    SPEECH_DATASET = "openslr/librispeech_asr"
+    IR_DATASET = "benjamin-paine/mit-impulse-response-survey"
+
+
     # == PATHS ==
     SEED = 42
 
@@ -36,7 +41,7 @@ class Config:
     # runs are labeled as such: <type>__<modelname>__<numberOfSamples>__<postfixInfo>.pkl
     # if any of those variables do not match, the inference run is considered different and will run.
     FORCE_RETRAIN = False
-    RUN_BENCHMARK_INFERENCE = True
+    RUN_BENCHMARK_INFERENCE = False
     IS_MOCK = True  # For future implementation. Not used at the moment.
     BATCH_SIZE = 50
 
@@ -45,3 +50,4 @@ class Config:
     # To run frameworkd comparison between 'mlx' and 'mps', need to force it.
     # Otherwise, will run on 'cpu'
     FORCE_MPS = True
+

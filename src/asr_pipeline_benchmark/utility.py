@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from asr_pipeline_benchmark.configuration import Config
 config = Config()
 
@@ -45,3 +46,69 @@ def batch_iterator(iterable, batch_size=50):
             batch = []
     if batch:  # Yield any remaining tail items
         yield batch
+
+
+def cleanup_results_col_names(results):
+    """
+    Take the list of results which contains nested dictionnaries, flattens them, and,
+    renames columns with more friendly names.
+    :param results: List
+    :return: dataframe
+    """
+
+    # Flattens nestsed dictionnaries
+    df = pd.json_normalize(results)
+
+    # Splits colnames
+    cols = [col.split(".") for col in df.columns]
+
+    # Columns mid-labels to exclude
+    exclude = {"sample_analysis", "reasons"}
+
+    cleaned_cols = [
+        ".".join(
+            item.replace("metrics", "mtr")
+            .replace("asr_flags", "flg")
+            .replace("action_required", "act_req")
+            .replace("digital_clipping_detected", "clip_det")
+            .replace("signal_too_faint", "sig_low")
+            .replace("likely_static_or_hum", "stat_hum")
+            .replace("dc_offset_warning", "dc_warn")
+            for item in sublist
+            if item not in exclude
+        )
+        for sublist in cols
+    ]
+
+    df.columns = cleaned_cols
+    return df
+
+
+def expand_mfcc_results(df):
+    """
+    Takes the dataframe cleanep up by cleanup_results_col_names and expands the mfcc columns.
+    :param df:
+    :return: expanded df
+    """
+    df_copy = df.copy()
+
+    columns = df_copy.columns.tolist()
+    cols_to_expand = ["mtr.mfccs_mean", "mtr.mfccs_std"]
+    mean_col_idx = df_copy.columns.get_loc(cols_to_expand[0])
+    std_col_idx = df_copy.columns.get_loc(cols_to_expand[1])
+
+    expanded_cols = pd.concat([
+        pd.DataFrame(df_copy[col].tolist(), index=df.index).rename(
+            columns=lambda x, c=col: f"{c.split('_')[0].rstrip('s')}{x+1}_{c.split('_')[1]}"
+        )
+        for col in cols_to_expand
+    ], axis=1)
+
+    new_col_order = (
+        columns[:mean_col_idx] +
+        expanded_cols.columns.tolist() +
+        columns[std_col_idx+1:]
+    )
+
+    return pd.concat([df_copy.drop(columns=cols_to_expand), expanded_cols], axis=1)[new_col_order]
+    # return expanded_cols

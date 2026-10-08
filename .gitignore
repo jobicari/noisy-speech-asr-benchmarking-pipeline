@@ -255,6 +255,7 @@ runs/
 wandb/
 mlruns/
 results/
+results/*
 notebooks/results/*
 notebooks/mlruns/*
 notebooks/mlartifacts/*

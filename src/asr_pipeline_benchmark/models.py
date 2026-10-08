@@ -223,7 +223,7 @@ def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=Non
     if corruption_type is None:
         corruption_type = ["none"]
 
-    run_filepath = config.TRANSCRIBE_CACHE_PATH / f"{run_label}.pkl"
+    run_filepath = config.TRANSCRIBE_CACHE_DIR / f"{run_label}.pkl"
     results = []
     cache_loaded_successfully = False
 
@@ -244,16 +244,28 @@ def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=Non
         batch_idx = 0
         limited_iterator = islice(iterator, n)
 
-        existing_batchs = list(config.CHECKPOINT_DIR.glob(run_label+"*batch_*.pkl"))
+        # glob() returns filesystem order, which is not guaranteed to be ascending.
+        # Sort by the numeric batch index that is already encoded in the filename.
+        existing_batchs = sorted(
+            config.CHECKPOINT_DIR.glob(run_label+"*batch_*.pkl"),
+            key= lambda f: int(f.stem.split("_")[-1]),
+        )
         if existing_batchs:
             batch_indices = [int(f.stem.split("_")[-1]) for f in existing_batchs]
-            batch_idx = max(batch_indices, default=0) + 1
-            sample_counter = batch_idx * config.BATCH_SIZE
-            print(f"Resuming pipeline from batch {batch_idx:04d} (approx sample {sample_counter})...")
+            # Only resume when the checkpoints form a contiguous run starting at 0,
+            # otherwise the fast-forward offset is wrong and samples get skipped.
+            expected = list(range(max(batch_indices)+1))
+            if batch_indices == expected:
+                batch_idx = max(batch_indices) + 1
+                sample_counter = batch_idx * config.BATCH_SIZE
+                print(f"Resuming pipeline from batch {batch_idx:04d} (sample {sample_counter})...")
 
-            # fast-forward the lazy iterator
-            for _ in range(sample_counter):
-                next(limited_iterator, None)
+                # fast-forward the lazy iterator
+                for _ in range(sample_counter):
+                    next(limited_iterator, None)
+
+            else:
+                print("Non-contiguous checkpoints found; ignoring resume to keep sampling deterministic.")
 
         for batch in batch_iterator(limited_iterator, batch_size=config.BATCH_SIZE):
             print(f"\n=== Batch #{batch_idx} ===")
@@ -269,7 +281,11 @@ def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=Non
             sample_counter += len(batch)
 
         # === BUILD ONE FINAL DATA FILE ===
-        batch_files = list(config.CHECKPOINT_DIR.glob(run_label+"*batch_*.pkl"))
+        # makes sure files are sorted on batch indices
+        batch_files = sorted(
+            config.CHECKPOINT_DIR.glob(run_label+"*batch_*.pkl"),
+            key= lambda f: int(f.stem.split("_")[-1]),
+        )
         print(f"len batch_files: {len(batch_files)}")
 
         # Load and concatenate

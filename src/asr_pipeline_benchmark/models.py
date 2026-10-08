@@ -1,5 +1,10 @@
+import pickle
+from pathlib import Path
+from itertools import islice
+
 from asr_pipeline_benchmark.configuration import Config
 from asr_pipeline_benchmark.utility import batch_iterator
+from asr_pipeline_benchmark.storage import StorageBackend
 from asr_pipeline_benchmark.preprocessing import (
     cleanup_pipeline,
     add_white_noise,
@@ -9,9 +14,8 @@ from asr_pipeline_benchmark.preprocessing import (
     extract_ir_from_mit_dataset
 )
 from asr_pipeline_benchmark.audio_analysis import analyze_asr_audio_health
+
 import jiwer
-import pickle
-from itertools import islice
 
 config = Config()
 
@@ -197,7 +201,15 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
     return results
 
 
-def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=None, clear_cache=False):
+def run_batch_inference(
+        transcriber,
+        iterator,
+        run_label,
+        n,
+        storage: StorageBackend,
+        corruption_type: dict =None,
+        clear_cache=False
+) -> list[dict]:
     """
     Run batch inference with the given transcriber function.
 
@@ -211,47 +223,52 @@ def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=Non
         Unique label for caching
     n : int
         Number of samples to process
-    corruption_type : list, optional
-        List of corruption types to apply
+    storage : StorageBackend
+    corruption_type : dict, optional
+        Dict of corruption types and their associated functions
     clear_cache : bool, default=False
         Whether to clear batch checkpoints after assembling final results
+
+    Returns:
+        list of dictionaries containing the results of the inference
+        every item (dict) in the list corresponds to a single sample
     """
     print(f"===== Run Batch Inference on {n} samples =====")
     print(f"run_label: {run_label}")
-    # print(f"corruption_type: {corruption_type}")
 
     if corruption_type is None:
         corruption_type = ["none"]
 
-    run_filepath = config.TRANSCRIBE_CACHE_DIR / f"{run_label}.pkl"
-    results = []
+    run_file_key = f"{config.TRANSCRIBE_CACHE_DIR}/{run_label}.pkl"
+    checkpoint_prefix = f"{config.CHECKPOINT_DIR}/{run_label}_batch_"
+
+    results: list[dict] = []
     cache_loaded_successfully = False
 
-    if run_filepath.exists() and not config.FORCE_RETRAIN:
+    if storage.exists(run_file_key) and not config.FORCE_RETRAIN:
         try:
-            with open(run_filepath, "rb") as f:
-                results = pickle.load(f)
+            results = storage.load_pickle(run_file_key)
             cache_loaded_successfully = True
-            print(f"Loaded test results from cache: \n\t{run_filepath}")
+            print(f"Loaded test results from cache: \n\t{run_file_key}")
 
-        except (pickle.UnpicklingError, IOError, EOFError, AttributeError) as e:
+        except Exception as e:
             print(f"Warning: Cache file found but could not be loaded due to error: {e}")
-            print("Falling back to running the benchmark inference...")
 
+    # Run inference
     if not cache_loaded_successfully and config.RUN_BENCHMARK_INFERENCE:
-
         sample_counter = 0
         batch_idx = 0
         limited_iterator = islice(iterator, n)
 
-        # glob() returns filesystem order, which is not guaranteed to be ascending.
-        # Sort by the numeric batch index that is already encoded in the filename.
-        existing_batchs = sorted(
-            config.CHECKPOINT_DIR.glob(run_label+"*batch_*.pkl"),
+        # Retrieve files via interface and sort by the numeric batch index
+        existing_batches = storage.list_checkpoints(checkpoint_prefix)
+        existing_batches = sorted(
+            existing_batches,
             key= lambda f: int(f.stem.split("_")[-1]),
         )
-        if existing_batchs:
-            batch_indices = [int(f.stem.split("_")[-1]) for f in existing_batchs]
+
+        if existing_batches:
+            batch_indices = [int(Path(f).stem.split("_")[-1]) for f in existing_batches]
             # Only resume when the checkpoints form a contiguous run starting at 0,
             # otherwise the fast-forward offset is wrong and samples get skipped.
             expected = list(range(max(batch_indices)+1))
@@ -267,44 +284,40 @@ def run_batch_inference(transcriber, iterator, run_label, n, corruption_type=Non
             else:
                 print("Non-contiguous checkpoints found; ignoring resume to keep sampling deterministic.")
 
+        # Generate and process batches
         for batch in batch_iterator(limited_iterator, batch_size=config.BATCH_SIZE):
             print(f"\n=== Batch #{batch_idx} ===")
-            batch_filepath = config.CHECKPOINT_DIR / f"{run_label}_batch_{batch_idx:04d}.pkl"
+            batch_file_key = f"{checkpoint_prefix}{batch_idx:04d}.pkl"
 
+            # === EXECUTION OF THE TRANSCRIPTION TASK ===
             batch_results = run_benchmark_test(transcriber, batch, n_samples=n, corruption_type=corruption_type)
 
-            with open(batch_filepath, "wb") as f:
-                pickle.dump(batch_results, f)
-                print(f"Successfully dumped batch {batch_idx} results to cache: \n\t{batch_filepath}")
+            storage.save_pickle(batch_results, batch_file_key)
+            print(f"Successfully dumped batch {batch_idx} results to cache: \n\t{batch_file_key}")
 
             batch_idx += 1
             sample_counter += len(batch)
 
+
         # === BUILD ONE FINAL DATA FILE ===
         # makes sure files are sorted on batch indices
         batch_files = sorted(
-            config.CHECKPOINT_DIR.glob(run_label+"*batch_*.pkl"),
-            key= lambda f: int(f.stem.split("_")[-1]),
+            storage.list_checkpoints(checkpoint_prefix),
+            key= lambda f: int(Path(f).stem.split("_")[-1]),
         )
-        print(f"len batch_files: {len(batch_files)}")
 
         # Load and concatenate
-        for file in batch_files:
-            with open(file, "rb") as f:
-                batch_ = pickle.load(f)
-            results.extend(batch_)
-
+        for file_key in batch_files:
+            batch_data = storage.load_pickle(file_key)
+            results.extend(batch_data)
 
         print(f"Benchmark Inference Tests completed with {n} samples")
 
-        with open(run_filepath, "wb") as f:
-            pickle.dump(results, f)
-            print(f"Successfully dumped test results to cache: \n\t{run_filepath}")
+        storage.save_pickle(results, run_file_key)
+        print(f"Successfully dumped test results to cache: \n\t{run_file_key}")
 
-        if clear_cache and run_filepath.exists():
-            print(f"Removing cache file: {run_filepath}")
-            for file in batch_files:
-                file.unlink()
-                print(f"Removed batch file: {file}")
+        if clear_cache and storage.exists(run_file_key):
+            for file_key in batch_files:
+                storage.delete(file_key)
 
     return results

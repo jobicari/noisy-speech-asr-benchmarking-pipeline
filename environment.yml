@@ -32,4 +32,5 @@ dependencies:
       - jiwer
       - gradio
       - modal
+      - google-cloud-storage
 

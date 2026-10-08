@@ -13,9 +13,11 @@ class Config:
     # == PATHS ==
     SEED = 42
 
-    NOTEBOOK_DIR = Path.cwd()
-    TRANSCRIBE_CACHE_PATH = NOTEBOOK_DIR / "results" / "transcribe_cache"
-    CHECKPOINT_DIR = TRANSCRIBE_CACHE_PATH / "checkpoint"
+    PROJECT_SRC = Path(__file__).parent.parent
+    RESULTS_DIR = PROJECT_SRC.parent / "results"
+
+    TRANSCRIBE_CACHE_DIR = RESULTS_DIR / "transcribe_cache"
+    CHECKPOINT_DIR = TRANSCRIBE_CACHE_DIR / "checkpoint"
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
     RUN_NOISE_TESTS = False
@@ -35,15 +37,15 @@ class Config:
 
 
     # == Benchmark Flags ==
-    # inference runs will verify first if a previous run has been cached as pickle file in TRANSCRIBE_CACHE_PATH
+    # inference runs will verify first if a previous run has been cached as pickle file in TRANSCRIBE_CACHE_DIR
     # and load it first if available. Otherwise will run inference.
     # Force train runs inference if previous run is present and overwrites the file.
     # runs are labeled as such: <type>__<modelname>__<numberOfSamples>__<postfixInfo>.pkl
     # if any of those variables do not match, the inference run is considered different and will run.
-    FORCE_RETRAIN = False
-    RUN_BENCHMARK_INFERENCE = False
+    FORCE_RETRAIN = True
+    RUN_BENCHMARK_INFERENCE = True
     IS_MOCK = True  # For future implementation. Not used at the moment.
-    BATCH_SIZE = 50
+    BATCH_SIZE = 2
 
     # == Speed Comparison Flags ==
     RUN_FRAMEWORK_SPEED_COMPARISON_TEST = False

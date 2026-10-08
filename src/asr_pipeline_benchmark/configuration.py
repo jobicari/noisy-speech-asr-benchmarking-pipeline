@@ -42,7 +42,7 @@ class Config:
     # Force train runs inference if previous run is present and overwrites the file.
     # runs are labeled as such: <type>__<modelname>__<numberOfSamples>__<postfixInfo>.pkl
     # if any of those variables do not match, the inference run is considered different and will run.
-    FORCE_RETRAIN = True
+    FORCE_RETRAIN = False
     RUN_BENCHMARK_INFERENCE = True
     IS_MOCK = True  # For future implementation. Not used at the moment.
     BATCH_SIZE = 2

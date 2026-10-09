@@ -232,10 +232,11 @@ def packet_loss(audio, sr=16_000, packet_ms=20, loss_rate=0.05,
         "repeat" -> repeat previous packet
         "noise"  -> replace with low-level noise
     """
-    if seed is not None:
-        rng = np.random.seed(seed)
+
+    if seed is None:
+        rng = np.random.default_rng(seed=42)
     else:
-        rng = np.random.default_rng(config.SEED)
+        rng = np.random.default_rng(seed=config.SEED)
 
     packet_size = int(sr * packet_ms / 1000)
     output = audio.copy()

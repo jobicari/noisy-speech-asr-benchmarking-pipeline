@@ -264,7 +264,7 @@ def run_batch_inference(
         existing_batches = storage.list_checkpoints(checkpoint_prefix)
         existing_batches = sorted(
             existing_batches,
-            key= lambda f: int(f.stem.split("_")[-1]),
+            key= lambda f: int(Path(f).stem.split("_")[-1]),
         )
 
         if existing_batches:

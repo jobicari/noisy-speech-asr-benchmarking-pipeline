@@ -34,4 +34,6 @@ dependencies:
       - datasets
       - jiwer
       - gradio
+      - modal
+      - google-cloud-storage
 

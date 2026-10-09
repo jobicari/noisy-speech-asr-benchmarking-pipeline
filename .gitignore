@@ -157,6 +157,11 @@ ENV/
 env.bak/
 venv.bak/
 
+# Credentials
+*key.json
+*credentials.json
+credentials.json
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -255,6 +260,7 @@ runs/
 wandb/
 mlruns/
 results/
+results/*
 notebooks/results/*
 notebooks/mlruns/*
 notebooks/mlartifacts/*

@@ -9,7 +9,11 @@ load_dotenv(override=True)
 @dataclass
 class Config:
     SEED: int = field(default_factory=lambda: int(os.getenv("SEED", 42)))
-    # SEED = int(os.getenv("SEED", 42))
+
+    # Run type
+    TEST_TYPE: str = field(default_factory=lambda: os.getenv("TEST_TYPE", "smallDR"))
+    NUMBER_OF_SAMPLES: int = field(default_factory=lambda: int(os.getenv("NUMBER_OF_SAMPLES", 10)))
+
     # ----------------------------------------------------
     # Credentials
     # ----------------------------------------------------
@@ -130,4 +134,8 @@ class Config:
     FORCE_MPS: bool = field(
         default_factory=lambda: os.getenv("FORCE_MPS", "False").lower() in ("true", "1", "yes")
     )
+
+
+
+
 

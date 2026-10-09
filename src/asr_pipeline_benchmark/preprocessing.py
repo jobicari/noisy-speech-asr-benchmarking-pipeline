@@ -412,3 +412,54 @@ def codec_degrade(audio, sr=16_000, bitrate="16k", codec="libopus"):
         ).astype(np.float32)
 
     return degraded
+
+
+
+
+
+class CorruptionListShort:
+
+    def __init__(self):
+        self.corruptions: dict = {
+            "none": lambda x: x,
+            "WN_3snr": lambda x: add_white_noise(x, 3),
+            "SV_0.5": lambda x: add_synthetic_reverberation(x, mix=0.5),
+        }
+
+
+class CorruptionListFull:
+    _ir = None
+
+    def __init__(self):
+        if CorruptionListFull._ir is None:
+            CorruptionListFull._ir, _ = extract_ir_from_mit_dataset(ir_idx=251)
+
+        self.ir = CorruptionListFull._ir
+        self.corruptions: dict = {
+            "none": lambda x: x,
+            "WN_3snr": lambda x: add_white_noise(x, 3),
+            "SV_0.5": lambda x: add_synthetic_reverberation(x, mix=0.5),
+            "RV_0.5_251": lambda x: add_real_reverberation(x, self.ir, mix=0.5),
+            "SDO_8_100_15": lambda x: add_smart_audio_dropouts(x, num_dropouts=8, dropout_duration_ms=100, threshold_below_global_db=15),
+            "WN_3-SV_.5-SDO_8_100_15": lambda x: add_smart_audio_dropouts(
+                                                        add_synthetic_reverberation(
+                                                            add_white_noise(x, 3),
+                                                        mix=0.5),
+                                                  num_dropouts=8, dropout_duration_ms=100, threshold_below_global_db=15),
+            "codec_8k": lambda x: codec_degrade(x, bitrate="8k"),
+            "codec_6k": lambda x: codec_degrade(x, bitrate="6k"),
+            "PL_40_.1": lambda x: packet_loss(x, packet_ms=40 , loss_rate=0.10),
+            "PL_30_.2": lambda x: packet_loss(x, packet_ms=30 , loss_rate=0.20),
+            "PL_20_.3": lambda x: packet_loss(x, packet_ms=20 , loss_rate=0.30),
+            "PL_10_.4": lambda x: packet_loss(x, packet_ms=10 , loss_rate=0.40),
+            "PL_5_.5": lambda x: packet_loss(x, packet_ms=5 , loss_rate=0.50),
+            "BL_800_3000": lambda x: band_limit(x, lowcut=800, highcut=3000),
+            "BL_600_2000": lambda x: band_limit(x, lowcut=600, highcut=2000),
+            "BL_500_1000": lambda x: band_limit(x, lowcut=500, highcut=1000),
+            "clip_1": lambda x: hard_clip_ratio(x, 0.1),
+            "clip_05": lambda x: hard_clip_ratio(x, 0.05),
+            "clip_025": lambda x: hard_clip_ratio(x, 0.025),
+            "clipN_1": lambda x: hard_clip_ratio_norm(x, 0.1),
+            "clipN_05": lambda x: hard_clip_ratio_norm(x, 0.05),
+            "clipN_025": lambda x: hard_clip_ratio_norm(x, 0.025),
+        }

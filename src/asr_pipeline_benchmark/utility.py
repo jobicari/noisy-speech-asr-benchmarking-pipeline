@@ -36,16 +36,16 @@ def generate_run_label(test_type, model_backend, n_samples, MODEL_SMALL=True, po
         return f"{test_type}__{model_name}__{n_samples}samples"
 
 
-def batch_iterator(iterable, batch_size=50):
+def checkpoint_iterator(iterable, checkpoint_size=50):
     """Yields small lists of samples (micro-batches) from a streaming iterator."""
-    batch = []
+    cp_batch = []
     for item in iterable:
-        batch.append(item)
-        if len(batch) == batch_size:
-            yield batch
-            batch = []
-    if batch:  # Yield any remaining tail items
-        yield batch
+        cp_batch.append(item)
+        if len(cp_batch) == checkpoint_size:
+            yield cp_batch
+            cp_batch = []
+    if cp_batch:  # Yield any remaining tail items
+        yield cp_batch
 
 
 def cleanup_results_col_names(results):

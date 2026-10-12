@@ -3,7 +3,7 @@ from pathlib import Path
 from itertools import islice
 
 from asr_pipeline_benchmark.configuration import Config
-from asr_pipeline_benchmark.utility import batch_iterator
+from asr_pipeline_benchmark.utility import checkpoint_iterator
 from asr_pipeline_benchmark.storage import StorageBackend
 from asr_pipeline_benchmark.preprocessing import (
     cleanup_pipeline,
@@ -36,19 +36,19 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small
             from mlx_whisper import transcribe as mlx_transcribe
             print("Apple Silicon Detected. Initializing MLX.")
 
-            def mlx_transcriber(audio_array):
+            def mlx_transcriber(audio_array_list, batch_size=1):
                 # Using MLX community model
                 if model_small:
-                    result = mlx_transcribe(audio_array, path_or_hf_repo=config.MLX_SMALL_MODEL_NAME)
-                    loaded_model_name = config.MLX_SMALL_MODEL_NAME
-                    # model = mlx_load_model(config.MLX_SMALL_MODEL_NAME)
+                    model_to_load = config.MLX_SMALL_MODEL_NAME
                 else:
-                    result = mlx_transcribe(audio_array, path_or_hf_repo=config.MLX_LARGE_MODEL_NAME)
-                    loaded_model_name = config.MLX_LARGE_MODEL_NAME
-                    # model = mlx_load_model(config.MLX_LARGE_MODEL_NAME)
+                    model_to_load = config.MLX_LARGE_MODEL_NAME
 
-                # print(f"Transcriber engine initialized. ({loaded_model_name})")
-                return {"text": result["text"]}
+                results = []
+                for audio_array in audio_array_list:
+                    sample_result = mlx_transcribe(audio_array, path_or_hf_repo=model_to_load)
+                    results.append({"text": sample_result["text"]})
+                return results
+
             return mlx_transcriber
 
         except ImportError:
@@ -82,8 +82,8 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small
     )
 
     # Enclose pipeline in a wrapper function to pass the manual config along
-    def hf_transcriber(audio_array):
-        result = whisper_pipe(audio_array, generation_config=whisper_config)
+    def hf_transcriber(audio_array_list, batch_size=1):
+        result = whisper_pipe(audio_array_list, generation_config=whisper_config, batch_size=batch_size)
         # print(f"Transcriber engine initialized. ({model_id})")
         return result
 
@@ -104,35 +104,155 @@ def get_model_backend(model) -> str:
         return f"unknown ({module_name})"
 
 
-def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None):   # no noise
-    """Function that runs the inference loop on a batch of audio samples
+# =================================================================
+# OLD FUNCTION - TO BE DELETED
+# =================================================================
+
+# def run_benchmark_test_old(transcriber, cp_batch, n_samples=10, corruption_type=None):   # no noise
+#     """Function that runs the inference loop on a checkpoint batch of audio samples
+#         with a list of corruption type and run error metrics (WER, CER)
+#         and return the results
+#     """
+#     print(f" === RUN BENCHMARK TEST started ===")
+#     if corruption_type is None:
+#         corruption_type = ["none"]
+#     # iterator = iter(dataset)
+#     target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
+#
+#     counter, running_avg_wer, running_avg_cer = 0, 0, 0
+#     tot_w_ref, tot_w_hits, tot_w_subs, tot_w_dels, tot_w_ins = 0,0,0,0,0
+#     tot_c_ref, tot_c_hits, tot_c_subs, tot_c_dels, tot_c_ins = 0,0,0,0,0
+#
+#     results = []
+#
+#     for idx, sample in enumerate(cp_batch):
+#         # sample = next(iterator)
+#         audio_array = sample["audio"]["array"]
+#         sample_rate = sample["audio"]["sampling_rate"]
+#
+#         for corr_type, corr_fn in corruption_type.items():
+#             counter+=1
+#             corr_audio_array = corr_fn(audio_array)
+#
+#             ref = cleanup_pipeline(sample["text"])
+#             hyp = cleanup_pipeline(transcriber(corr_audio_array)['text'])
+#
+#             # -----------------------------------------------------------------------------
+#             # Word Level metrics - WER
+#             # -----------------------------------------------------------------------------
+#             wer_metrics = jiwer.process_words(ref, hyp)
+#             wer = wer_metrics.wer
+#             w_hits = wer_metrics.hits
+#             w_subs = wer_metrics.substitutions
+#             w_dels = wer_metrics.deletions
+#             w_ins = wer_metrics.insertions
+#             num_words = w_hits + w_subs + w_dels
+#
+#             # Add to total for macro-averages
+#             running_avg_wer = (counter-1) / counter*running_avg_wer + wer/counter
+#             tot_w_ref += num_words
+#             tot_w_hits += w_hits
+#             tot_w_subs += w_subs
+#             tot_w_dels += w_dels
+#             tot_w_ins += w_ins
+#
+#
+#             # -----------------------------------------------------------------------------
+#             # Characeter Level metrics - CER
+#             # -----------------------------------------------------------------------------
+#             char_metrics = jiwer.process_characters(ref, hyp)
+#             cer = char_metrics.cer
+#             c_hits = char_metrics.hits
+#             c_subs = char_metrics.substitutions
+#             c_dels = char_metrics.deletions
+#             c_ins = char_metrics.insertions
+#             num_chars = c_hits + c_subs + c_dels
+#
+#             # Add to total for macro-averages
+#             running_avg_cer = (counter-1) / counter*running_avg_cer + cer/counter
+#             tot_c_ref += num_chars
+#             tot_c_hits += c_hits
+#             tot_c_subs += c_subs
+#             tot_c_dels += c_dels
+#             tot_c_ins += c_ins
+#
+#             # -----------------------------------------------------------------------------
+#             # Store results and references into list for further analysis
+#             # -----------------------------------------------------------------------------
+#             sample_analysis = analyze_asr_audio_health(corr_audio_array, sample_rate)
+#
+#             results.append({"idx": sample['id'],
+#                             "corr_type": corr_type,
+#                             "wer": wer,
+#                             "w_hits": w_hits,
+#                             "w_subs": w_subs,
+#                             "w_dels": w_dels,
+#                             "w_ins": w_ins,
+#                             "num_words": num_words,
+#                             "cer": cer,
+#                             "c_hits": c_hits,
+#                             "c_subs": c_subs,
+#                             "c_dels": c_dels,
+#                             "c_ins": c_ins,
+#                             "num_chars": num_chars,
+#                             "sample_analysis": sample_analysis,
+#                             "ref": ref,
+#                             "hyp": hyp})
+#
+#
+#
+#     print(f" === RUN BENCHMARK TEST finished ===")
+#     return results
+
+
+# =================================================================
+# NEW VERSION
+# =================================================================
+
+def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None):   # no noise
+    """Function that runs the inference loop on a checkpoint batch of audio samples
         with a list of corruption type and run error metrics (WER, CER)
         and return the results
     """
     print(f" === RUN BENCHMARK TEST started ===")
     if corruption_type is None:
         corruption_type = ["none"]
-    # iterator = iter(dataset)
-    target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
 
-    counter, running_avg_wer, running_avg_cer = 0, 0, 0
-    tot_w_ref, tot_w_hits, tot_w_subs, tot_w_dels, tot_w_ins = 0,0,0,0,0
-    tot_c_ref, tot_c_hits, tot_c_subs, tot_c_dels, tot_c_ins = 0,0,0,0,0
+    # This should be moved to configuration and not hard coded
+    target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
 
     results = []
 
-    for idx, sample in enumerate(batch):
+    for idx, sample in enumerate(cp_batch):
         # sample = next(iterator)
         audio_array = sample["audio"]["array"]
         sample_rate = sample["audio"]["sampling_rate"]
 
+        corr_audio_list = []
+        metadata = []
+
+        # Compute ref once per sample
+        ref = cleanup_pipeline(sample["text"])
+
         for corr_type, corr_fn in corruption_type.items():
-            counter+=1
+            # counter+=1
+
             corr_audio_array = corr_fn(audio_array)
 
-            ref = cleanup_pipeline(sample["text"])
-            hyp = cleanup_pipeline(transcriber(corr_audio_array)['text'])
+            # Build the list of raw audio file to send to the transcriber engine
+            corr_audio_list.append(corr_audio_array)
 
+            # Run audio health analysis
+            sample_analysis = analyze_asr_audio_health(corr_audio_array, sample_rate)
+            metadata.append({"idx": sample['id'],
+                             "corr_type": corr_type,
+                             "sample_analysis": sample_analysis})
+
+
+        # The list of audio to be transcribed and iterate over pipe output to retrieve the last metrics needed
+        for out, meta in zip(transcriber(corr_audio_list, batch_size=config.BATCH_SIZE), metadata):
+
+            hyp = cleanup_pipeline(out['text'])
             # -----------------------------------------------------------------------------
             # Word Level metrics - WER
             # -----------------------------------------------------------------------------
@@ -143,14 +263,6 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
             w_dels = wer_metrics.deletions
             w_ins = wer_metrics.insertions
             num_words = w_hits + w_subs + w_dels
-
-            # Add to total for macro-averages
-            running_avg_wer = (counter-1) / counter*running_avg_wer + wer/counter
-            tot_w_ref += num_words
-            tot_w_hits += w_hits
-            tot_w_subs += w_subs
-            tot_w_dels += w_dels
-            tot_w_ins += w_ins
 
 
             # -----------------------------------------------------------------------------
@@ -164,21 +276,8 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
             c_ins = char_metrics.insertions
             num_chars = c_hits + c_subs + c_dels
 
-            # Add to total for macro-averages
-            running_avg_cer = (counter-1) / counter*running_avg_cer + cer/counter
-            tot_c_ref += num_chars
-            tot_c_hits += c_hits
-            tot_c_subs += c_subs
-            tot_c_dels += c_dels
-            tot_c_ins += c_ins
-
-            # -----------------------------------------------------------------------------
-            # Store results and references into list for further analysis
-            # -----------------------------------------------------------------------------
-            sample_analysis = analyze_asr_audio_health(corr_audio_array, sample_rate)
-
-            results.append({"idx": sample['id'],
-                            "corr_type": corr_type,
+            results.append({"idx": meta["idx"],
+                            "corr_type": meta["corr_type"],
                             "wer": wer,
                             "w_hits": w_hits,
                             "w_subs": w_subs,
@@ -191,7 +290,7 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
                             "c_dels": c_dels,
                             "c_ins": c_ins,
                             "num_chars": num_chars,
-                            "sample_analysis": sample_analysis,
+                            "sample_analysis": meta["sample_analysis"],
                             "ref": ref,
                             "hyp": hyp})
 
@@ -201,7 +300,7 @@ def run_benchmark_test(transcriber, batch, n_samples=10, corruption_type=None): 
     return results
 
 
-def run_batch_inference(
+def run_checkpoint_inference(
         transcriber,
         iterator,
         run_label,
@@ -211,7 +310,7 @@ def run_batch_inference(
         clear_cache=False
 ) -> list[dict]:
     """
-    Run batch inference with the given transcriber function.
+    Run batch inference per checkpoints with the given transcriber function.
 
     Parameters:
     -----------
@@ -233,14 +332,14 @@ def run_batch_inference(
         list of dictionaries containing the results of the inference
         every item (dict) in the list corresponds to a single sample
     """
-    print(f"===== Run Batch Inference on {n} samples =====")
+    print(f"===== Run Batch Checkpoint Inference on {n} samples =====")
     print(f"run_label: {run_label}")
 
     if corruption_type is None:
         corruption_type = ["none"]
 
     run_file_key = f"{config.TRANSCRIBE_CACHE_DIR}/{run_label}.pkl"
-    checkpoint_prefix = f"{config.CHECKPOINT_DIR}/{run_label}_batch_"
+    checkpoint_prefix = f"{config.CHECKPOINT_DIR}/{run_label}_CP_"
 
     results: list[dict] = []
     cache_loaded_successfully = False
@@ -257,25 +356,25 @@ def run_batch_inference(
     # Run inference
     if not cache_loaded_successfully and config.RUN_BENCHMARK_INFERENCE:
         sample_counter = 0
-        batch_idx = 0
+        checkpoint_idx = 0
         limited_iterator = islice(iterator, n)
 
-        # Retrieve files via interface and sort by the numeric batch index
-        existing_batches = storage.list_checkpoints(checkpoint_prefix)
-        existing_batches = sorted(
-            existing_batches,
+        # Retrieve files via interface and sort by the numeric checkpoint index
+        existing_checkpoints = storage.list_checkpoints(checkpoint_prefix)
+        existing_checkpoints = sorted(
+            existing_checkpoints,
             key= lambda f: int(Path(f).stem.split("_")[-1]),
         )
 
-        if existing_batches:
-            batch_indices = [int(Path(f).stem.split("_")[-1]) for f in existing_batches]
+        if existing_checkpoints:
+            cp_indices = [int(Path(f).stem.split("_")[-1]) for f in existing_checkpoints]
             # Only resume when the checkpoints form a contiguous run starting at 0,
             # otherwise the fast-forward offset is wrong and samples get skipped.
-            expected = list(range(max(batch_indices)+1))
-            if batch_indices == expected:
-                batch_idx = max(batch_indices) + 1
-                sample_counter = batch_idx * config.BATCH_SIZE
-                print(f"Resuming pipeline from batch {batch_idx:04d} (sample {sample_counter})...")
+            expected = list(range(max(cp_indices)+1))
+            if cp_indices == expected:
+                checkpoint_idx = max(cp_indices) + 1
+                sample_counter = checkpoint_idx * config.CHECKPOINT_SIZE
+                print(f"Resuming pipeline from checkpoint {checkpoint_idx:04d} (sample {sample_counter})...")
 
                 # fast-forward the lazy iterator
                 for _ in range(sample_counter):
@@ -284,32 +383,32 @@ def run_batch_inference(
             else:
                 print("Non-contiguous checkpoints found; ignoring resume to keep sampling deterministic.")
 
-        # Generate and process batches
-        for batch in batch_iterator(limited_iterator, batch_size=config.BATCH_SIZE):
-            print(f"\n=== Batch #{batch_idx} ===")
-            batch_file_key = f"{checkpoint_prefix}{batch_idx:04d}.pkl"
+        # Generate and process checkpoints
+        for cp_batch in checkpoint_iterator(limited_iterator, checkpoint_size=config.CHECKPOINT_SIZE):
+            print(f"\n=== Checkpoint #{checkpoint_idx} ===")
+            cp_file_key = f"{checkpoint_prefix}{checkpoint_idx:04d}.pkl"
 
             # === EXECUTION OF THE TRANSCRIPTION TASK ===
-            batch_results = run_benchmark_test(transcriber, batch, n_samples=n, corruption_type=corruption_type)
+            checkpoint_results = run_benchmark_test(transcriber, cp_batch, n_samples=n, corruption_type=corruption_type)
 
-            storage.save_pickle(batch_results, batch_file_key)
-            print(f"Successfully dumped batch {batch_idx} results to cache: \n\t{batch_file_key}")
+            storage.save_pickle(checkpoint_results, cp_file_key)
+            print(f"Successfully dumped checkpoint {checkpoint_idx} results to cache: \n\t{cp_file_key}")
 
-            batch_idx += 1
-            sample_counter += len(batch)
+            checkpoint_idx += 1
+            sample_counter += len(cp_batch)
 
 
         # === BUILD ONE FINAL DATA FILE ===
-        # makes sure files are sorted on batch indices
-        batch_files = sorted(
+        # makes sure files are sorted on checkpoint indices
+        checkpoint_files = sorted(
             storage.list_checkpoints(checkpoint_prefix),
             key= lambda f: int(Path(f).stem.split("_")[-1]),
         )
 
         # Load and concatenate
-        for file_key in batch_files:
-            batch_data = storage.load_pickle(file_key)
-            results.extend(batch_data)
+        for file_key in checkpoint_files:
+            cp_data = storage.load_pickle(file_key)
+            results.extend(cp_data)
 
         print(f"Benchmark Inference Tests completed with {n} samples")
 
@@ -317,7 +416,7 @@ def run_batch_inference(
         print(f"Successfully dumped test results to cache: \n\t{run_file_key}")
 
         if clear_cache and storage.exists(run_file_key):
-            for file_key in batch_files:
+            for file_key in checkpoint_files:
                 storage.delete(file_key)
 
     return results

@@ -1,9 +1,10 @@
+import os
 from asr_pipeline_benchmark.configuration import Config
 import pandas as pd
 config = Config()
 
 from asr_pipeline_benchmark.storage import LocalStorage, GCSStorage
-from asr_pipeline_benchmark.models import load_transcriber_engine, get_model_backend, run_batch_inference
+from asr_pipeline_benchmark.models import load_transcriber_engine, get_model_backend, run_checkpoint_inference
 from asr_pipeline_benchmark.data import get_mit_ir_dataset, get_speech_dataset
 from asr_pipeline_benchmark.preprocessing import (
     cleanup_pipeline, add_white_noise, add_synthetic_reverberation,
@@ -50,7 +51,7 @@ if __name__ == "__main__":
         iterator = iter(dataset)
 
         # RUN
-        run_batch_inference(
+        run_checkpoint_inference(
             transcriber,
             iterator,
             run_label,
@@ -59,6 +60,8 @@ if __name__ == "__main__":
             corruption_type=corruptions_list.corruptions,
             clear_cache=True
         )
+
+        # iterator.close()
 
         # Verification that the samples used in both as the same
         if run_small_model:
@@ -70,6 +73,7 @@ if __name__ == "__main__":
                 str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
             )
 
+
     df_smallModel = pd.DataFrame(smallModel)
     df_largeModel = pd.DataFrame(largeModel)
 
@@ -77,3 +81,5 @@ if __name__ == "__main__":
     assert df_smallModel["ref"].equals(df_largeModel["ref"]), "REF are not the same"
 
     print(f"RUN COMPLETED SUCCESSFULLY")
+
+    os._exit(0)

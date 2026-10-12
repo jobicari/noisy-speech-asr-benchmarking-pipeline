@@ -118,7 +118,9 @@ class Config:
     BATCH_SIZE: int = field(
         default_factory=lambda: int(os.getenv("BATCH_SIZE", 1))
     )
-
+    CHECKPOINT_SIZE: int = field(
+        default_factory=lambda: int(os.getenv("CHECKPOINT_SIZE", 50))
+    )
 
     # ----------------------------------------------------
     # SPEED COMPARISON FLAGS

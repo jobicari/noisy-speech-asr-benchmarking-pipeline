@@ -5,7 +5,7 @@ import pandas as pd
 config = Config()
 
 from asr_pipeline_benchmark.storage import LocalStorage, GCSStorage
-from asr_pipeline_benchmark.models import load_transcriber_engine, get_model_backend, run_checkpoint_inference
+from asr_pipeline_benchmark.models import load_transcriber_engine, run_checkpoint_inference
 from asr_pipeline_benchmark.data import get_mit_ir_dataset, get_speech_dataset
 from asr_pipeline_benchmark.preprocessing import (
     cleanup_pipeline, add_white_noise, add_synthetic_reverberation,
@@ -69,13 +69,11 @@ if __name__ == "__main__":
     # ----------------------------------------------------------------------------------------
     # CONFIGURATION
     # ----------------------------------------------------------------------------------------
-    testtype = config.TEST_TYPE
-    n = config.NUMBER_OF_SAMPLES
     run_label = generate_run_label(
-        testtype,
-        get_model_backend(transcriber),
-        n,
-        MODEL_SMALL=run_small_model,
+        config.TEST_TYPE,
+        config.INFERENCE_BACKEND,
+        config.MODELS,
+        config.NUMBER_OF_SAMPLES,
         postfix=config.RUN_POSTFIX
     )
     # Load iterator on the dataset in streaming mode
@@ -84,37 +82,16 @@ if __name__ == "__main__":
     # RUN INFERENCE
     # ----------------------------------------------------------------------------------------
     run_checkpoint_inference(
-        transcriber,
+        transcribers,
         iterator,
         run_label,
-        n,
+        config.NUMBER_OF_SAMPLES,
         storageInterface,
         corruption_type=corruptions_list.corruptions,
         clear_cache=True
     )
     iterator.close()
-    # ----------------------------------------------------------------------------------------
-    # RELOAD MODEL FROM STORED PICKLE FILE FOR FINAL COMPARISON
-    # ----------------------------------------------------------------------------------------
-    if run_small_model:
-        smallModel = storageInterface.load_pickle(
-            str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
-        )
-    else:
-        largeModel = storageInterface.load_pickle(
-            str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
-        )
 
-
-    # ----------------------------------------------------------------------------------------
-    # VERIFICATION -> that the samples used in both are the same
-    # ----------------------------------------------------------------------------------------
-    df_smallModel = pd.DataFrame(smallModel)
-    df_largeModel = pd.DataFrame(largeModel)
-
-    assert df_smallModel["idx"].equals(df_largeModel["idx"]), "IDX are not the same"
-    assert df_smallModel["ref"].equals(df_largeModel["ref"]), "REF are not the same"
-
-    print(f"RUN COMPLETED SUCCESSFULLY")
+    print(f"RUN COMPLETED SUCCESSFULLY", flush=True)
 
     os._exit(0)

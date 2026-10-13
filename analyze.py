@@ -3,7 +3,7 @@
 
 Stdlib only, so it runs on the Lambda host or a laptop without installs.
 
-    python3 analyze.py bench_runs/sweep_XXXX --price-per-hour 0.75 \
+    python3 analyze.py results/lambda_bench_runs/sweep_XXXX --price-per-hour 0.75 \
         --target-inferences 44000
 
 Writes summary.csv, report.md and report.html into the sweep directory.
@@ -80,6 +80,9 @@ def analyse_run(run_dir, price):
     samples = [t for t in timing if t.get("event") == "sample"]
     phases = [t for t in timing if t.get("event") == "phase"]
     ckpts = [t for t in timing if t.get("event") == "checkpoint"]
+    # Newer runs log prep once per sample in its own "prep" event, shared by all
+    # models. Older runs (e.g. bs_sweep1) carry t_prep_s on each "sample" record.
+    preps = [t for t in timing if t.get("event") == "prep"]
     gpu = read_gpu(run_dir / "gpu.csv")
     cpu = read_cpu(run_dir / "cpu.csv")
 
@@ -88,7 +91,7 @@ def analyse_run(run_dir, price):
 
     n_items = sum(s.get("n_items", 0) for s in samples) or meta.get("n_inferences")
     audio_s = sum(s.get("audio_s", 0) for s in samples) or None
-    prep = sum(s.get("t_prep_s", 0) for s in samples)
+    prep = sum(p.get("t_prep_s", 0) for p in (preps or samples))
     infer = sum(s.get("t_infer_s", 0) for s in samples)
     score = sum(s.get("t_score_s", 0) for s in samples)
     fixed = sum(p.get("seconds", 0) for p in phases)
@@ -114,7 +117,17 @@ def analyse_run(run_dir, price):
     r["rtf"] = steady_wall / audio_s if audio_s else None
     r["rtf_infer_only"] = infer / audio_s if audio_s and samples else None
 
-    per_sample = [s.get("t_prep_s", 0) + s.get("t_infer_s", 0) + s.get("t_score_s", 0) for s in samples]
+    if preps:
+        # One sample = its prep plus infer and score for every model.
+        by_sample = {}
+        for p in preps:
+            by_sample[p.get("sample_idx")] = by_sample.get(p.get("sample_idx"), 0) + p.get("t_prep_s", 0)
+        for s in samples:
+            by_sample[s.get("sample_idx")] = (by_sample.get(s.get("sample_idx"), 0)
+                                              + s.get("t_infer_s", 0) + s.get("t_score_s", 0))
+        per_sample = list(by_sample.values())
+    else:
+        per_sample = [s.get("t_prep_s", 0) + s.get("t_infer_s", 0) + s.get("t_score_s", 0) for s in samples]
     per_infer = [s["t_infer_s"] for s in samples if "t_infer_s" in s]
     for p in (50, 90, 99):
         r[f"sample_p{p}_s"] = pct(per_sample, p)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the ASR container once per config (x REPEATS) on the Lambda instance and
 # record, per run: wall time, nvidia-smi samples, docker CPU/mem samples, logs.
-# Analyse afterwards with:  python3 analyze.py bench_runs/<sweep>/
+# Analyse afterwards with:  python3 analyze.py results/lambda_bench_runs/<sweep>/
 #
 # Usage (defaults shown; override any of them as env vars):
 #   CONFIGS="BATCH_SIZE=1 BATCH_SIZE=8 BATCH_SIZE=16 BATCH_SIZE=22" \
@@ -26,7 +26,7 @@ N_INFERENCES="${N_INFERENCES:-}"
 PER_RUN_ENV="${PER_RUN_ENV:-}"
 EXTRA_DOCKER_ARGS="${EXTRA_DOCKER_ARGS:-}"
 GPU_SAMPLE_MS="${GPU_SAMPLE_MS:-500}"
-OUT_ROOT="${OUT_ROOT:-./bench_runs}"
+OUT_ROOT="${OUT_ROOT:-./results/lambda_bench_runs}"
 SWEEP_ID="${SWEEP_ID:-sweep_$(date -u +%Y%m%dT%H%M%SZ)}"
 
 DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo docker"

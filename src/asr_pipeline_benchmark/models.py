@@ -108,21 +108,21 @@ def load_mlx_transcriber(model_id):
 
 
 
-def get_model_backend(model) -> str:
-    """Helper Function that returns 'mlx' or 'torch' based on the instantiated model object"""
-    module_name = getattr(model, "__name__", "")
-
-    if "mlx" in module_name:
-        return "mlx"
-    elif "torch" in module_name or "transformers" or"hf_" in module_name:
-        return "torch"
-    else:
-        return f"unknown ({module_name})"
-
-
+# def get_model_backend(model) -> str:
+#     """Helper Function that returns 'mlx' or 'torch' based on the instantiated model object"""
+#     module_name = getattr(model, "__name__", "")
+#
+#     if "mlx" in module_name:
+#         return "mlx"
+#     elif "torch" in module_name or "transformers" or"hf_" in module_name:
+#         return "torch"
+#     else:
+#         return f"unknown ({module_name})"
 
 
-def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None):   # no noise
+
+
+def run_benchmark_test(transcribers, cp_batch, n_samples=10, corruption_type=None):   # no noise
     """Function that runs the inference loop on a checkpoint batch of audio samples
         with a list of corruption type and run error metrics (WER, CER)
         and return the results
@@ -154,6 +154,7 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
         # Compute ref once per sample
         ref = cleanup_pipeline(sample["text"])
 
+        n_items = len(corruption_type.items())
         for corr_type, corr_fn in corruption_type.items():
             # counter+=1
 
@@ -171,88 +172,95 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
 
         timer_prep_stop = time.perf_counter()
         t_prep_s = timer_prep_stop - timer_prep_start
-
+        record = {
+            "event": "prep",
+            "sample_idx": sample['id'],
+            "n_items": n_items,
+            "t_prep_s": t_prep_s
+        }
+        print_timing(record)
 
         # -----------------------------------------------------------------------------
         # Perform transcriptions
         # -----------------------------------------------------------------------------
+        for transcriber in transcribers:
+            # Start time for the GPU bound inference processes
+            timer_infer_start = time.perf_counter()
 
-        # Start time for the GPU bound inference processes
-        timer_infer_start = time.perf_counter()
+            transcriptions = transcriber(corr_audio_list, batch_size=config.BATCH_SIZE)
+            model_name = transcriber.model_name.replace("/", "_")
 
-        transcriptions = transcriber(corr_audio_list, batch_size=config.BATCH_SIZE)
-
-        timer_infer_stop = time.perf_counter()
-        t_infer_s = timer_infer_stop - timer_infer_start
-
-        # -----------------------------------------------------------------------------
-        # iterate over pipe output to retrieve the last metrics needed
-        # -----------------------------------------------------------------------------
-        # Start timer for the score process
-        timer_score_start = time.perf_counter()
-        for out, meta in zip(transcriptions, metadata):
-
-            hyp = cleanup_pipeline(out['text'])
-            # -----------------------------------------------------------------------------
-            # Word Level metrics - WER
-            # -----------------------------------------------------------------------------
-            wer_metrics = jiwer.process_words(ref, hyp)
-            wer = wer_metrics.wer
-            w_hits = wer_metrics.hits
-            w_subs = wer_metrics.substitutions
-            w_dels = wer_metrics.deletions
-            w_ins = wer_metrics.insertions
-            num_words = w_hits + w_subs + w_dels
-
+            timer_infer_stop = time.perf_counter()
+            t_infer_s = timer_infer_stop - timer_infer_start
 
             # -----------------------------------------------------------------------------
-            # Characeter Level metrics - CER
+            # iterate over pipe output to retrieve the last metrics needed
             # -----------------------------------------------------------------------------
-            char_metrics = jiwer.process_characters(ref, hyp)
-            cer = char_metrics.cer
-            c_hits = char_metrics.hits
-            c_subs = char_metrics.substitutions
-            c_dels = char_metrics.deletions
-            c_ins = char_metrics.insertions
-            num_chars = c_hits + c_subs + c_dels
+            # Start timer for the score process
+            timer_score_start = time.perf_counter()
+            for out, meta in zip(transcriptions, metadata):
 
-            results.append({"idx": meta["idx"],
-                            "corr_type": meta["corr_type"],
-                            "wer": wer,
-                            "w_hits": w_hits,
-                            "w_subs": w_subs,
-                            "w_dels": w_dels,
-                            "w_ins": w_ins,
-                            "num_words": num_words,
-                            "cer": cer,
-                            "c_hits": c_hits,
-                            "c_subs": c_subs,
-                            "c_dels": c_dels,
-                            "c_ins": c_ins,
-                            "num_chars": num_chars,
-                            "sample_analysis": meta["sample_analysis"],
-                            "ref": ref,
-                            "hyp": hyp})
+                hyp = cleanup_pipeline(out['text'])
+                # -----------------------------------------------------------------------------
+                # Word Level metrics - WER
+                # -----------------------------------------------------------------------------
+                wer_metrics = jiwer.process_words(ref, hyp)
+                wer = wer_metrics.wer
+                w_hits = wer_metrics.hits
+                w_subs = wer_metrics.substitutions
+                w_dels = wer_metrics.deletions
+                w_ins = wer_metrics.insertions
+                num_words = w_hits + w_subs + w_dels
 
-        timer_score_stop = time.perf_counter()
-        t_score_s = timer_score_stop - timer_score_start
 
-        # -----------------------------------------------------------------------------
-        # Log sample stats records
-        # -----------------------------------------------------------------------------
-        n_items = len(corruption_type.items())
-        audio_s = audio_array.shape[0]/sample_rate*n_items
-        record = {
-            "event": "sample",
-            "model": transcriber.model_name.replace("/", "_"),
-            "sample_idx": sample['id'],
-            "n_items": n_items,
-            "audio_s": audio_s,
-            "t_prep_s": t_prep_s,
-            "t_infer_s": t_infer_s,
-            "t_score_s": t_score_s
-        }
-        print_timing(record)
+                # -----------------------------------------------------------------------------
+                # Characeter Level metrics - CER
+                # -----------------------------------------------------------------------------
+                char_metrics = jiwer.process_characters(ref, hyp)
+                cer = char_metrics.cer
+                c_hits = char_metrics.hits
+                c_subs = char_metrics.substitutions
+                c_dels = char_metrics.deletions
+                c_ins = char_metrics.insertions
+                num_chars = c_hits + c_subs + c_dels
+
+                results.append({"idx": meta["idx"],
+                                "model": model_name,
+                                "corr_type": meta["corr_type"],
+                                "wer": wer,
+                                "w_hits": w_hits,
+                                "w_subs": w_subs,
+                                "w_dels": w_dels,
+                                "w_ins": w_ins,
+                                "num_words": num_words,
+                                "cer": cer,
+                                "c_hits": c_hits,
+                                "c_subs": c_subs,
+                                "c_dels": c_dels,
+                                "c_ins": c_ins,
+                                "num_chars": num_chars,
+                                "sample_analysis": meta["sample_analysis"],
+                                "ref": ref,
+                                "hyp": hyp})
+
+            timer_score_stop = time.perf_counter()
+            t_score_s = timer_score_stop - timer_score_start
+
+            # -----------------------------------------------------------------------------
+            # Log sample stats records
+            # -----------------------------------------------------------------------------
+
+            audio_s = audio_array.shape[0]/sample_rate*n_items
+            record = {
+                "event": "sample",
+                "model": model_name,
+                "sample_idx": sample['id'],
+                "n_items": n_items,
+                "audio_s": audio_s,
+                "t_infer_s": t_infer_s,
+                "t_score_s": t_score_s
+            }
+            print_timing(record)
 
 
     print(f" === RUN BENCHMARK TEST finished ===")
@@ -263,7 +271,7 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
 
 
 def run_checkpoint_inference(
-        transcriber: list,
+        transcribers: list,
         iterator,
         run_label,
         n,
@@ -351,7 +359,7 @@ def run_checkpoint_inference(
             cp_file_key = f"{checkpoint_prefix}{checkpoint_idx:04d}.pkl"
 
             # === EXECUTION OF THE TRANSCRIPTION TASK ===
-            checkpoint_results = run_benchmark_test(transcriber, cp_batch, n_samples=n, corruption_type=corruption_type)
+            checkpoint_results = run_benchmark_test(transcribers, cp_batch, n_samples=n, corruption_type=corruption_type)
 
             timer_checkpoints_start = time.perf_counter()
 
@@ -364,7 +372,6 @@ def run_checkpoint_inference(
             record = {
                 "event": "checkpoint",
                 "checkpoint_idx": checkpoint_idx,
-                "model": transcriber.model_name.replace("/", "_"),
                 "seconds": t_chkpnt_s
             }
             print_timing(record)
@@ -402,7 +409,7 @@ def run_checkpoint_inference(
         record = {
             "event": "phase",
             "name": "finalize",
-            "model": transcriber.model_name.replace("/", "_"),
+            "run_label": run_label,
             "seconds": t_finalize_s
         }
         print_timing(record)

@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 import time
+import hashlib
 import numpy as np
 import pandas as pd
 from asr_pipeline_benchmark.configuration import Config
@@ -21,22 +22,18 @@ def generate_sine_tone(frequency=440.0, duration=2.0, sr=16_000, amplitude=1.0):
 
 
 
-def generate_run_label(test_type, model_backend, n_samples, MODEL_SMALL=True, postfix=""):
-    if model_backend =="mlx":
-        if MODEL_SMALL:
-            model_name = config.MLX_SMALL_MODEL_NAME.replace("/", "_")
-        else:
-            model_name = config.MLX_LARGE_MODEL_NAME.replace("/", "_")
-    else:
-        if MODEL_SMALL:
-            model_name = config.HF_TRANSFORMER_SMALL_MODEL_NAME.replace("/", "_")
-        else:
-            model_name = config.HF_TRANSFORMER_LARGE_MODEL_NAME.replace("/", "_")
+def _hash_model_list(model_list):
+    return hashlib.sha1(str(model_list).encode()).hexdigest()[:8]
+
+
+def generate_run_label(test_type, model_backend, models,  n_samples, postfix=""):
+    models_sorted = sorted(models)
+    model_hash = _hash_model_list(models_sorted)
 
     if len(postfix) > 0:
-        return f"{test_type}__{model_name}__{n_samples}samples__{postfix}"
+        return f"{test_type}__{model_backend}__{model_hash}__{n_samples}samples__{postfix}"
     else:
-        return f"{test_type}__{model_name}__{n_samples}samples"
+        return f"{test_type}__{model_backend}__{model_hash}__{n_samples}samples"
 
 
 def checkpoint_iterator(iterable, checkpoint_size=50):

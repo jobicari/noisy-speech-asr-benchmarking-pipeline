@@ -6,6 +6,14 @@ import os
 
 load_dotenv(override=False)
 
+
+def _env_list(name, default):
+    """Helper function to retrieve env as list, split on commas and remove any unintenional spaces"""
+    raw = os.getenv(name, default)
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
+
 @dataclass
 class Config:
     SEED: int = field(default_factory=lambda: int(os.getenv("SEED", 42)))
@@ -70,11 +78,15 @@ class Config:
     )
 
     MLX_MODELS: list = field(
-        default_factory=lambda: os.getenv("MLX_MODELS", "mlx-community/whisper-small-mlx,mlx-community/whisper-large-v3-turbo").split(",")
+        default_factory=lambda: _env_list(
+            "MLX_MODELS", "mlx-community/whisper-small-mlx,mlx-community/whisper-large-v3-turbo"
+        )
     )
 
     HF_MODELS: list = field(
-        default_factory=lambda: os.getenv("HF_MODELS", "openai/whisper-small,openai/whisper-large-v3-turbo").split(",")
+        default_factory=lambda: _env_list(
+            "HF_MODELS", "openai/whisper-small,openai/whisper-large-v3-turbo"
+        )
     )
 
 

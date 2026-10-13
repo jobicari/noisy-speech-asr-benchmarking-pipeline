@@ -1,9 +1,10 @@
 import pickle
+import time
 from pathlib import Path
 from itertools import islice
 
 from asr_pipeline_benchmark.configuration import Config
-from asr_pipeline_benchmark.utility import checkpoint_iterator
+from asr_pipeline_benchmark.utility import checkpoint_iterator, print_timing
 from asr_pipeline_benchmark.storage import StorageBackend
 from asr_pipeline_benchmark.preprocessing import (
     cleanup_pipeline,
@@ -29,19 +30,18 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small
     :return:
         if MLX is used returns the mlx transcriber, otherwise
     """
-    loaded_model_name = ""
     if IS_APPLE_SILICON:
         try:
             # from mlx_whisper.load_models import load_model as mlx_load_model
             from mlx_whisper import transcribe as mlx_transcribe
             print("Apple Silicon Detected. Initializing MLX.")
+            # Using MLX community model
+            if model_small:
+                model_to_load = config.MLX_SMALL_MODEL_NAME
+            else:
+                model_to_load = config.MLX_LARGE_MODEL_NAME
 
             def mlx_transcriber(audio_array_list, batch_size=1):
-                # Using MLX community model
-                if model_small:
-                    model_to_load = config.MLX_SMALL_MODEL_NAME
-                else:
-                    model_to_load = config.MLX_LARGE_MODEL_NAME
 
                 results = []
                 for audio_array in audio_array_list:
@@ -49,6 +49,7 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small
                     results.append({"text": sample_result["text"]})
                 return results
 
+            mlx_transcriber.model_name = model_to_load
             return mlx_transcriber
 
         except ImportError:
@@ -87,6 +88,7 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small
         # print(f"Transcriber engine initialized. ({model_id})")
         return result
 
+    hf_transcriber.model_name = whisper_pipe.model.name_or_path
     return hf_transcriber
 
 
@@ -103,106 +105,6 @@ def get_model_backend(model) -> str:
     else:
         return f"unknown ({module_name})"
 
-
-# =================================================================
-# OLD FUNCTION - TO BE DELETED
-# =================================================================
-
-# def run_benchmark_test_old(transcriber, cp_batch, n_samples=10, corruption_type=None):   # no noise
-#     """Function that runs the inference loop on a checkpoint batch of audio samples
-#         with a list of corruption type and run error metrics (WER, CER)
-#         and return the results
-#     """
-#     print(f" === RUN BENCHMARK TEST started ===")
-#     if corruption_type is None:
-#         corruption_type = ["none"]
-#     # iterator = iter(dataset)
-#     target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
-#
-#     counter, running_avg_wer, running_avg_cer = 0, 0, 0
-#     tot_w_ref, tot_w_hits, tot_w_subs, tot_w_dels, tot_w_ins = 0,0,0,0,0
-#     tot_c_ref, tot_c_hits, tot_c_subs, tot_c_dels, tot_c_ins = 0,0,0,0,0
-#
-#     results = []
-#
-#     for idx, sample in enumerate(cp_batch):
-#         # sample = next(iterator)
-#         audio_array = sample["audio"]["array"]
-#         sample_rate = sample["audio"]["sampling_rate"]
-#
-#         for corr_type, corr_fn in corruption_type.items():
-#             counter+=1
-#             corr_audio_array = corr_fn(audio_array)
-#
-#             ref = cleanup_pipeline(sample["text"])
-#             hyp = cleanup_pipeline(transcriber(corr_audio_array)['text'])
-#
-#             # -----------------------------------------------------------------------------
-#             # Word Level metrics - WER
-#             # -----------------------------------------------------------------------------
-#             wer_metrics = jiwer.process_words(ref, hyp)
-#             wer = wer_metrics.wer
-#             w_hits = wer_metrics.hits
-#             w_subs = wer_metrics.substitutions
-#             w_dels = wer_metrics.deletions
-#             w_ins = wer_metrics.insertions
-#             num_words = w_hits + w_subs + w_dels
-#
-#             # Add to total for macro-averages
-#             running_avg_wer = (counter-1) / counter*running_avg_wer + wer/counter
-#             tot_w_ref += num_words
-#             tot_w_hits += w_hits
-#             tot_w_subs += w_subs
-#             tot_w_dels += w_dels
-#             tot_w_ins += w_ins
-#
-#
-#             # -----------------------------------------------------------------------------
-#             # Characeter Level metrics - CER
-#             # -----------------------------------------------------------------------------
-#             char_metrics = jiwer.process_characters(ref, hyp)
-#             cer = char_metrics.cer
-#             c_hits = char_metrics.hits
-#             c_subs = char_metrics.substitutions
-#             c_dels = char_metrics.deletions
-#             c_ins = char_metrics.insertions
-#             num_chars = c_hits + c_subs + c_dels
-#
-#             # Add to total for macro-averages
-#             running_avg_cer = (counter-1) / counter*running_avg_cer + cer/counter
-#             tot_c_ref += num_chars
-#             tot_c_hits += c_hits
-#             tot_c_subs += c_subs
-#             tot_c_dels += c_dels
-#             tot_c_ins += c_ins
-#
-#             # -----------------------------------------------------------------------------
-#             # Store results and references into list for further analysis
-#             # -----------------------------------------------------------------------------
-#             sample_analysis = analyze_asr_audio_health(corr_audio_array, sample_rate)
-#
-#             results.append({"idx": sample['id'],
-#                             "corr_type": corr_type,
-#                             "wer": wer,
-#                             "w_hits": w_hits,
-#                             "w_subs": w_subs,
-#                             "w_dels": w_dels,
-#                             "w_ins": w_ins,
-#                             "num_words": num_words,
-#                             "cer": cer,
-#                             "c_hits": c_hits,
-#                             "c_subs": c_subs,
-#                             "c_dels": c_dels,
-#                             "c_ins": c_ins,
-#                             "num_chars": num_chars,
-#                             "sample_analysis": sample_analysis,
-#                             "ref": ref,
-#                             "hyp": hyp})
-#
-#
-#
-#     print(f" === RUN BENCHMARK TEST finished ===")
-#     return results
 
 
 # =================================================================
@@ -224,7 +126,14 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
     results = []
 
     for idx, sample in enumerate(cp_batch):
-        # sample = next(iterator)
+
+        # -----------------------------------------------------------------------------
+        # Perform Preprocessing (Corruptions and Sample Analysis)
+        # -----------------------------------------------------------------------------
+
+        # Start time for the CPU bound prep process
+        timer_prep_start = time.perf_counter()
+
         audio_array = sample["audio"]["array"]
         sample_rate = sample["audio"]["sampling_rate"]
 
@@ -249,8 +158,28 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
                              "sample_analysis": sample_analysis})
 
 
-        # The list of audio to be transcribed and iterate over pipe output to retrieve the last metrics needed
-        for out, meta in zip(transcriber(corr_audio_list, batch_size=config.BATCH_SIZE), metadata):
+        timer_prep_stop = time.perf_counter()
+        t_prep_s = timer_prep_stop - timer_prep_start
+
+
+        # -----------------------------------------------------------------------------
+        # Perform transcriptions
+        # -----------------------------------------------------------------------------
+
+        # Start time for the GPU bound inference processes
+        timer_infer_start = time.perf_counter()
+
+        transcriptions = transcriber(corr_audio_list, batch_size=config.BATCH_SIZE)
+
+        timer_infer_stop = time.perf_counter()
+        t_infer_s = timer_infer_stop - timer_infer_start
+
+        # -----------------------------------------------------------------------------
+        # iterate over pipe output to retrieve the last metrics needed
+        # -----------------------------------------------------------------------------
+        # Start timer for the score process
+        timer_score_start = time.perf_counter()
+        for out, meta in zip(transcriptions, metadata):
 
             hyp = cleanup_pipeline(out['text'])
             # -----------------------------------------------------------------------------
@@ -294,6 +223,25 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
                             "ref": ref,
                             "hyp": hyp})
 
+        timer_score_stop = time.perf_counter()
+        t_score_s = timer_score_stop - timer_score_start
+
+        # -----------------------------------------------------------------------------
+        # Log sample stats records
+        # -----------------------------------------------------------------------------
+        n_items = len(corruption_type.items())
+        audio_s = audio_array.shape[0]/sample_rate*n_items
+        record = {
+            "event": "sample",
+            "model": transcriber.model_name.replace("/", "_"),
+            "sample_idx": sample['id'],
+            "n_items": n_items,
+            "audio_s": audio_s,
+            "t_prep_s": t_prep_s,
+            "t_infer_s": t_infer_s,
+            "t_score_s": t_score_s
+        }
+        print_timing(record)
 
 
     print(f" === RUN BENCHMARK TEST finished ===")
@@ -391,8 +339,21 @@ def run_checkpoint_inference(
             # === EXECUTION OF THE TRANSCRIPTION TASK ===
             checkpoint_results = run_benchmark_test(transcriber, cp_batch, n_samples=n, corruption_type=corruption_type)
 
+            timer_checkpoints_start = time.perf_counter()
+
             storage.save_pickle(checkpoint_results, cp_file_key)
             print(f"Successfully dumped checkpoint {checkpoint_idx} results to cache: \n\t{cp_file_key}")
+
+            timer_checkpoints_stop = time.perf_counter()
+            t_chkpnt_s = timer_checkpoints_stop - timer_checkpoints_start
+
+            record = {
+                "event": "checkpoint",
+                "checkpoint_idx": checkpoint_idx,
+                "model": transcriber.model_name.replace("/", "_"),
+                "seconds": t_chkpnt_s
+            }
+            print_timing(record)
 
             checkpoint_idx += 1
             sample_counter += len(cp_batch)
@@ -400,6 +361,9 @@ def run_checkpoint_inference(
 
         # === BUILD ONE FINAL DATA FILE ===
         # makes sure files are sorted on checkpoint indices
+
+        timer_finalize_start = time.perf_counter()
+
         checkpoint_files = sorted(
             storage.list_checkpoints(checkpoint_prefix),
             key= lambda f: int(Path(f).stem.split("_")[-1]),
@@ -418,5 +382,15 @@ def run_checkpoint_inference(
         if clear_cache and storage.exists(run_file_key):
             for file_key in checkpoint_files:
                 storage.delete(file_key)
+
+        timer_finalize_stop = time.perf_counter()
+        t_finalize_s = timer_finalize_stop - timer_finalize_start
+        record = {
+            "event": "phase",
+            "name": "finalize",
+            "model": transcriber.model_name.replace("/", "_"),
+            "seconds": t_finalize_s
+        }
+        print_timing(record)
 
     return results

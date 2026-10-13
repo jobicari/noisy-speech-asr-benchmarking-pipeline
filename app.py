@@ -1,4 +1,5 @@
 import os
+import time
 from asr_pipeline_benchmark.configuration import Config
 import pandas as pd
 config = Config()
@@ -13,7 +14,7 @@ from asr_pipeline_benchmark.preprocessing import (
     packet_loss, band_limit, hard_clip_ratio, hard_clip_ratio_norm,
     codec_degrade, CorruptionListShort, CorruptionListFull
 )
-from asr_pipeline_benchmark.utility import generate_run_label
+from asr_pipeline_benchmark.utility import generate_run_label, print_timing
 
 
 
@@ -42,10 +43,29 @@ if __name__ == "__main__":
     # Run transcription pipeline
     for run_small_model in [True, False]:
         # SETUP
+        timer_load_start =  time.perf_counter()
+
         transcriber = load_transcriber_engine(config.IS_APPLE_SILICON, model_small=run_small_model)
+
+        timer_load_stop = time.perf_counter()
+        t_load_s = timer_load_stop - timer_load_start
+        record = {
+            "event": "phase",
+            "name": "model_load",
+            "model": transcriber.model_name.replace("/", "_"),
+            "seconds": t_load_s
+        }
+        print_timing(record)
+
         testtype = config.TEST_TYPE
         n = config.NUMBER_OF_SAMPLES
-        run_label = generate_run_label(testtype, get_model_backend(transcriber), n, MODEL_SMALL=run_small_model)
+        run_label = generate_run_label(
+            testtype,
+            get_model_backend(transcriber),
+            n,
+            MODEL_SMALL=run_small_model,
+            postfix=config.RUN_POSTFIX
+        )
 
         # Load iterator on the dataset in streaming mode
         iterator = iter(dataset)

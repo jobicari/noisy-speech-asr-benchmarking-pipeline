@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import os
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 @dataclass
 class Config:
@@ -120,6 +120,9 @@ class Config:
     )
     CHECKPOINT_SIZE: int = field(
         default_factory=lambda: int(os.getenv("CHECKPOINT_SIZE", 50))
+    )
+    RUN_POSTFIX: str = field(
+        default_factory=lambda: os.getenv("RUN_POSTFIX", "")
     )
 
     # ----------------------------------------------------

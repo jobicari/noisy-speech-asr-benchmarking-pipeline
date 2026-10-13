@@ -1,3 +1,6 @@
+import json
+from datetime import datetime, timezone
+import time
 import numpy as np
 import pandas as pd
 from asr_pipeline_benchmark.configuration import Config
@@ -112,3 +115,8 @@ def expand_mfcc_results(df):
 
     return pd.concat([df_copy.drop(columns=cols_to_expand), expanded_cols], axis=1)[new_col_order]
     # return expanded_cols
+
+
+def print_timing(record):
+    utc_now = datetime.now(timezone.utc)
+    print(f"[TIMING] {json.dumps({'ts': utc_now.isoformat(), **record})}", flush=True)

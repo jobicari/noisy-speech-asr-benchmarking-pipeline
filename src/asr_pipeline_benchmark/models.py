@@ -21,58 +21,44 @@ import jiwer
 config = Config()
 
 
-def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small=config.MODEL_SMALL):
-    """
-    Automatically detect if Apple Silicon and tries to load mlx_whisper if available
-    If not available, falls back to HuggingFace pipeline and setup device accordingly ("cuda", "mps", "cpu")
 
-    Needs GLOBAL VAR: IS_APPLE_SILICON  to be set True or False
-    :return:
-        if MLX is used returns the mlx transcriber, otherwise
-    """
-    if IS_APPLE_SILICON:
-        try:
-            # from mlx_whisper.load_models import load_model as mlx_load_model
-            from mlx_whisper import transcribe as mlx_transcribe
-            print("Apple Silicon Detected. Initializing MLX.")
-            # Using MLX community model
-            if model_small:
-                model_to_load = config.MLX_SMALL_MODEL_NAME
-            else:
-                model_to_load = config.MLX_LARGE_MODEL_NAME
+def load_transcriber_engine(backend, model_id):
+    if backend=="mlx":
+        return load_mlx_transcriber(model_id)
+    if backend=="hf":
+        return load_hf_transcriber(model_id)
+    raise ValueError(f"Unknown INFERENCE_BACKEND '{backend}'. Expected 'mlx' or 'hf'.")
 
-            def mlx_transcriber(audio_array_list, batch_size=1):
 
-                results = []
-                for audio_array in audio_array_list:
-                    sample_result = mlx_transcribe(audio_array, path_or_hf_repo=model_to_load)
-                    results.append({"text": sample_result["text"]})
-                return results
 
-            mlx_transcriber.model_name = model_to_load
-            return mlx_transcriber
+def _select_device():
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    if config.REQUIRE_CUDA:
+        raise RuntimeError(
+            "REQUIRE_CUDA=True but no CUDA device is visible. "
+            "Check that the container was started with --gpus all."
+        )
+    return "mps" if config.IS_APPLE_SILICON else "cpu"
 
-        except ImportError:
-            print(f"Apple Silicon detected but 'mlx_whisper' not installed. Falling back to PyTorch.")
 
+
+def load_hf_transcriber(model_id):
     # 2 Standard Production/Linux Fallback
     from transformers import pipeline, AutoTokenizer, GenerationConfig
     import torch
 
-    device = "cuda" if torch.cuda.is_available() else ("mps" if (IS_APPLE_SILICON or FORCE_MPS) else "cpu")
-    print(f"Standard architecture detected. Initializing Hugging Face pipeline on device: {device}")
-    dtype = torch.float32 if device=="mps" else torch.float16
+    device = _select_device()
+    # float16 only where it pays off. mps and cpu stay on floa32
+    dtype = torch.float16 if device == "cuda" else torch.float32
+    print(f"Initializing HF pipeline: {model_id} on {device} ({dtype})")
 
-    if model_small:
-        model_id = config.HF_TRANSFORMER_SMALL_MODEL_NAME
-    else:
-        model_id = config.HF_TRANSFORMER_LARGE_MODEL_NAME
     tokenizer = AutoTokenizer.from_pretrained(model_id, clean_up_tokenization_spaces=False)
 
     whisper_config = GenerationConfig.from_pretrained(model_id)
     whisper_config.task = "transcribe"
     whisper_config.language = "en"
-    # whisper_config.num_beams = 1
 
     whisper_pipe = pipeline(
         "automatic-speech-recognition",
@@ -85,11 +71,39 @@ def load_transcriber_engine(IS_APPLE_SILICON=False, FORCE_MPS=False, model_small
     # Enclose pipeline in a wrapper function to pass the manual config along
     def hf_transcriber(audio_array_list, batch_size=1):
         result = whisper_pipe(audio_array_list, generation_config=whisper_config, batch_size=batch_size)
-        # print(f"Transcriber engine initialized. ({model_id})")
         return result
 
     hf_transcriber.model_name = whisper_pipe.model.name_or_path
     return hf_transcriber
+
+
+
+
+def load_mlx_transcriber(model_id):
+    if not config.IS_APPLE_SILICON:
+        raise RuntimeError(
+            "INFERENCE_BACKEND=mlx needs Apple Silicon. Use INFERENCE_BACKEND=hf on this machine."
+        )
+
+    try:
+        from mlx_whisper import transcribe as mlx_transcribe
+    except ImportError as e:
+        raise ImportError(
+            "INFERENCE_BACKEND=mlx but 'mlx_whisper' is not installed. Run: pip install mlx-whisper"
+        ) from e
+
+    print(f"Initializing MLX: {model_id}")
+
+    def mlx_transcriber(audio_array_list, batch_size=1):
+        results = []
+        for audio_array in audio_array_list:
+            sample_result = mlx_transcribe(audio_array, path_or_hf_repo=model_id)
+            results.append({"text": sample_result["text"]})
+        return results
+
+    mlx_transcriber.model_name = model_id
+    return mlx_transcriber
+
 
 
 
@@ -107,9 +121,6 @@ def get_model_backend(model) -> str:
 
 
 
-# =================================================================
-# NEW VERSION
-# =================================================================
 
 def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None):   # no noise
     """Function that runs the inference loop on a checkpoint batch of audio samples
@@ -248,8 +259,11 @@ def run_benchmark_test(transcriber, cp_batch, n_samples=10, corruption_type=None
     return results
 
 
+
+
+
 def run_checkpoint_inference(
-        transcriber,
+        transcriber: list,
         iterator,
         run_label,
         n,
@@ -262,7 +276,7 @@ def run_checkpoint_inference(
 
     Parameters:
     -----------
-    transcriber : callable
+    transcriber : a list of callable
         A function that takes an audio array and returns {"text": str}
     iterator : iterator
         Streaming dataset iterator

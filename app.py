@@ -22,13 +22,17 @@ if __name__ == "__main__":
     dataset = get_speech_dataset()
     ir_ds = get_mit_ir_dataset()
 
+    # ----------------------------------------------------------------------------------------
     # Load storage interface accoring to the config
+    # ----------------------------------------------------------------------------------------
     if config.USE_CLOUD_STORAGE:
         storageInterface = GCSStorage(config.GCS_BUCKET_NAME)
     else:
         storageInterface = LocalStorage()
 
+    # ----------------------------------------------------------------------------------------
     # Determine the right corruptions list depending on the run levels: DR small, DR full, Main run
+    # ----------------------------------------------------------------------------------------
     if config.TEST_TYPE == "smallDr":
         corruptions_list = CorruptionListShort()
     elif config.TEST_TYPE == "fullDr" or config.TEST_TYPE == "fullRun":
@@ -40,13 +44,16 @@ if __name__ == "__main__":
     smallModel = None
     largeModel = None
 
-    # Run transcription pipeline
-    for run_small_model in [True, False]:
-        # SETUP
+
+    # ----------------------------------------------------------------------------------------
+    # LOAD TRANSCRIBER ENGINE
+    # ----------------------------------------------------------------------------------------
+    transcribers = []
+
+    for model_id in config.MODELS:
+
         timer_load_start =  time.perf_counter()
-
-        transcriber = load_transcriber_engine(config.IS_APPLE_SILICON, model_small=run_small_model)
-
+        transcriber = load_transcriber_engine(config.INFERENCE_BACKEND, model_id)
         timer_load_stop = time.perf_counter()
         t_load_s = timer_load_stop - timer_load_start
         record = {
@@ -57,43 +64,51 @@ if __name__ == "__main__":
         }
         print_timing(record)
 
-        testtype = config.TEST_TYPE
-        n = config.NUMBER_OF_SAMPLES
-        run_label = generate_run_label(
-            testtype,
-            get_model_backend(transcriber),
-            n,
-            MODEL_SMALL=run_small_model,
-            postfix=config.RUN_POSTFIX
+        transcribers.append(transcriber)
+
+    # ----------------------------------------------------------------------------------------
+    # CONFIGURATION
+    # ----------------------------------------------------------------------------------------
+    testtype = config.TEST_TYPE
+    n = config.NUMBER_OF_SAMPLES
+    run_label = generate_run_label(
+        testtype,
+        get_model_backend(transcriber),
+        n,
+        MODEL_SMALL=run_small_model,
+        postfix=config.RUN_POSTFIX
+    )
+    # Load iterator on the dataset in streaming mode
+    iterator = iter(dataset)
+    # ----------------------------------------------------------------------------------------
+    # RUN INFERENCE
+    # ----------------------------------------------------------------------------------------
+    run_checkpoint_inference(
+        transcriber,
+        iterator,
+        run_label,
+        n,
+        storageInterface,
+        corruption_type=corruptions_list.corruptions,
+        clear_cache=True
+    )
+    iterator.close()
+    # ----------------------------------------------------------------------------------------
+    # RELOAD MODEL FROM STORED PICKLE FILE FOR FINAL COMPARISON
+    # ----------------------------------------------------------------------------------------
+    if run_small_model:
+        smallModel = storageInterface.load_pickle(
+            str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
+        )
+    else:
+        largeModel = storageInterface.load_pickle(
+            str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
         )
 
-        # Load iterator on the dataset in streaming mode
-        iterator = iter(dataset)
 
-        # RUN
-        run_checkpoint_inference(
-            transcriber,
-            iterator,
-            run_label,
-            n,
-            storageInterface,
-            corruption_type=corruptions_list.corruptions,
-            clear_cache=True
-        )
-
-        # iterator.close()
-
-        # Verification that the samples used in both as the same
-        if run_small_model:
-            smallModel = storageInterface.load_pickle(
-                str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
-            )
-        else:
-            largeModel = storageInterface.load_pickle(
-                str(config.TRANSCRIBE_CACHE_DIR) + f"/{run_label}.pkl"
-            )
-
-
+    # ----------------------------------------------------------------------------------------
+    # VERIFICATION -> that the samples used in both are the same
+    # ----------------------------------------------------------------------------------------
     df_smallModel = pd.DataFrame(smallModel)
     df_largeModel = pd.DataFrame(largeModel)
 

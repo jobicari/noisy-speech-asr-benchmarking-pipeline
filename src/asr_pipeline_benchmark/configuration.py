@@ -47,23 +47,6 @@ class Config:
     CHECKPOINT_DIR: str | Path = field(init=False)
     PROJECT_ROOT: Path = field(init=False)
 
-    def __post_init__(self):
-        # Anchor project  root dynamically relative to config file location
-        self.PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
-        if self.USE_CLOUD_STORAGE:
-            # GCS Object Keys MUST be clean, relative POSIX strings (no leading / or OS drive letters)
-            self.TRANSCRIBE_CACHE_DIR = self.REL_TRANSCRIBE_CACHE_DIR
-            self.CHECKPOINT_DIR = self.REL_CHECKPOINT_DIR
-        else:
-            # Local filesystem uses absolute Path objects anchored to PROJECT_ROOT
-            self.TRANSCRIBE_CACHE_DIR = self.PROJECT_ROOT / self.REL_TRANSCRIBE_CACHE_DIR
-            self.CHECKPOINT_DIR = self.PROJECT_ROOT / self.REL_CHECKPOINT_DIR
-
-            Path(self.TRANSCRIBE_CACHE_DIR).mkdir(parents=True, exist_ok=True)
-            Path(self.CHECKPOINT_DIR).mkdir(parents=True, exist_ok=True)
-
-
     # ----------------------------------------------------
     # OPERATION FLAGS
     # ----------------------------------------------------
@@ -78,22 +61,20 @@ class Config:
     IS_APPLE_SILICON = platform.system() == "Darwin" and platform.processor() == "arm"
 
     # == MODEL FLAGS ==
-    # MODEL_SMALL determines which size of transcriber engines is loaded.
-    # Based on the model names below
-    MODEL_SMALL: bool = field(
-        default_factory=lambda: os.getenv("MODEL_SMALL", "True").lower() in ("true", "1", "yes")
+    INFERENCE_BACKEND: str = field(
+        default_factory=lambda: os.getenv("INFERENCE_BACKEND", "hf").lower().strip("")
     )
-    MLX_SMALL_MODEL_NAME: str = field(
-        default_factory=lambda: os.getenv("MLX_SMALL_MODEL_NAME", "mlx-community/whisper-small-mlx")
+
+    REQUIRE_CUDA: bool = field(
+        default_factory=lambda: os.getenv("REQUIRE_CUDA", "True").lower() in ("true", "1", "yes")
     )
-    MLX_LARGE_MODEL_NAME: str = field(
-        default_factory=lambda: os.getenv("MLX_LARGE_MODEL_NAME", "mlx-community/whisper-large-v3-turbo")
+
+    MLX_MODELS: list = field(
+        default_factory=lambda: os.getenv("MLX_MODELS", "mlx-community/whisper-small-mlx,mlx-community/whisper-large-v3-turbo").split(",")
     )
-    HF_TRANSFORMER_SMALL_MODEL_NAME: str = field(
-        default_factory=lambda: os.getenv("HF_TRANSFORMER_SMALL_MODEL_NAME", "openai/whisper-small")
-    )
-    HF_TRANSFORMER_LARGE_MODEL_NAME: str = field(
-        default_factory=lambda: os.getenv("HF_TRANSFORMER_LARGE_MODEL_NAME", "openai/whisper-large-v3-turbo" )
+
+    HF_MODELS: list = field(
+        default_factory=lambda: os.getenv("HF_MODELS", "openai/whisper-small,openai/whisper-large-v3-turbo").split(",")
     )
 
 
@@ -141,6 +122,35 @@ class Config:
     )
 
 
+    def __post_init__(self):
+        # Anchor project  root dynamically relative to config file location
+        self.PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+        if self.USE_CLOUD_STORAGE:
+            # GCS Object Keys MUST be clean, relative POSIX strings (no leading / or OS drive letters)
+            self.TRANSCRIBE_CACHE_DIR = self.REL_TRANSCRIBE_CACHE_DIR
+            self.CHECKPOINT_DIR = self.REL_CHECKPOINT_DIR
+        else:
+            # Local filesystem uses absolute Path objects anchored to PROJECT_ROOT
+            self.TRANSCRIBE_CACHE_DIR = self.PROJECT_ROOT / self.REL_TRANSCRIBE_CACHE_DIR
+            self.CHECKPOINT_DIR = self.PROJECT_ROOT / self.REL_CHECKPOINT_DIR
+
+            Path(self.TRANSCRIBE_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+            Path(self.CHECKPOINT_DIR).mkdir(parents=True, exist_ok=True)
+
+        self.INFERENCE_BACKEND = self.INFERENCE_BACKEND.lower().strip("")
+        if self.INFERENCE_BACKEND not in ["mlx", "hf"]:
+            raise ValueError(f"INFERENCE_BACKEND must be either 'mlx' or 'hf'. Got {self.INFERENCE_BACKEND}")
+        if self.INFERENCE_BACKEND == "mlx" and not self.IS_APPLE_SILICON:
+            raise ValueError(f"INFERENCE_BACKEND=mlx needs Apple Silicon. Use INFERENCE_BACKEND=hf on this machine.")
+
+
+    @property
+    def MODELS(self):
+        models = self.MLX_MODELS if self.INFERENCE_BACKEND == "mlx" else self.HF_MODELS
+        if not models:
+            raise ValueError("No models specified.")
+        return models
 
 
 

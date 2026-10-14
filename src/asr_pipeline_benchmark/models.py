@@ -46,7 +46,7 @@ def _select_device():
 
 def load_hf_transcriber(model_id):
     # 2 Standard Production/Linux Fallback
-    from transformers import pipeline, AutoTokenizer, GenerationConfig
+    from transformers import pipeline, AutoConfig, AutoTokenizer, GenerationConfig
     import torch
 
     device = _select_device()
@@ -54,26 +54,40 @@ def load_hf_transcriber(model_id):
     dtype = torch.float16 if device == "cuda" else torch.float32
     print(f"Initializing HF pipeline: {model_id} on {device} ({dtype})")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id, clean_up_tokenization_spaces=False)
+    # Whisper is a seq2seq model and needs the generation config (task, language).
+    # CTC models like wav2vec2 decode in one pass and take no generation config.
+    is_whisper = AutoConfig.from_pretrained(model_id).model_type == "whisper"
 
-    whisper_config = GenerationConfig.from_pretrained(model_id)
-    whisper_config.task = "transcribe"
-    whisper_config.language = "en"
+    if is_whisper:
+        tokenizer = AutoTokenizer.from_pretrained(model_id, clean_up_tokenization_spaces=False)
 
-    whisper_pipe = pipeline(
-        "automatic-speech-recognition",
-        model=model_id,
-        tokenizer=tokenizer,
-        dtype=dtype,
-        device=device
-    )
+        whisper_config = GenerationConfig.from_pretrained(model_id)
+        whisper_config.task = "transcribe"
+        whisper_config.language = "en"
+
+        asr_pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model_id,
+            tokenizer=tokenizer,
+            dtype=dtype,
+            device=device
+        )
+        call_kwargs = {"generation_config": whisper_config}
+    else:
+        asr_pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model_id,
+            dtype=dtype,
+            device=device
+        )
+        call_kwargs = {}
 
     # Enclose pipeline in a wrapper function to pass the manual config along
     def hf_transcriber(audio_array_list, batch_size=1):
-        result = whisper_pipe(audio_array_list, generation_config=whisper_config, batch_size=batch_size)
+        result = asr_pipe(audio_array_list, batch_size=batch_size, **call_kwargs)
         return result
 
-    hf_transcriber.model_name = whisper_pipe.model.name_or_path
+    hf_transcriber.model_name = asr_pipe.model.name_or_path
     return hf_transcriber
 
 

@@ -1,4 +1,6 @@
+import json
 import subprocess
+from functools import lru_cache
 import tempfile
 from pathlib import Path
 import soundfile as sf
@@ -16,14 +18,24 @@ config = Config()
 ### HELPER FUNCTIONS ###
 ########################
 
+@lru_cache(maxsize=1)
+def _english_normalizer():
+    """Whisper's English text normalizer, built once per process.
+    The British to American spelling map ships with the Whisper tokenizer files."""
+    from huggingface_hub import hf_hub_download
+    from transformers.models.whisper.english_normalizer import EnglishTextNormalizer
+
+    with open(hf_hub_download("openai/whisper-small", "normalizer.json")) as f:
+        spelling_map = json.load(f)
+    return EnglishTextNormalizer(spelling_map)
+
+
 def cleanup_pipeline(text: str) -> str:
-    """Normalize ASR transcriptions by lowercasing, removing punctuation, and stripping whitespace."""
-    pipeline = jiwer.Compose([
-        jiwer.ToLowerCase(),
-        jiwer.RemovePunctuation(),
-        jiwer.Strip(),
-    ])
-    return pipeline(text)
+    """Normalize references and transcriptions the same way with Whisper's English normalizer:
+    lowercase, no punctuation, numbers as digits, standard spellings and abbreviations.
+    Applied to both sides so models that write "20" or "Mr." are not penalized against
+    references that spell them out."""
+    return _english_normalizer()(text)
 
 
 def extract_ir_from_mit_dataset(dataset=None, ir_idx=None, target_sr=16_000):

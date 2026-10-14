@@ -127,27 +127,40 @@ def _sample_decoder(sample):
             "audio": {"array": audio["array"], "sampling_rate": audio["sampling_rate"]}}
 
 
-def run_benchmark_test(transcribers, pool, cp_batch, n_samples=10):   # no noise
+
+
+def _start_prep(pool, batch):
+    if batch is None:
+        return None
+    return pool.imap(prep_sample, (_sample_decoder(s) for s in batch))
+
+
+
+def _fetch(batches):
+    """Helper function to time fetching a batch of the streamed datasets"""
+    t0 = time.perf_counter()
+    batch = next(batches, None)
+    return batch, time.perf_counter() - t0
+
+
+
+
+def run_inference(transcribers, prepped_batch, n_samples=10):   # no noise
     """Function that runs the inference loop on a checkpoint batch of audio samples
         with a list of corruption type and run error metrics (WER, CER)
         and return the results
     """
     print(f" === RUN BENCHMARK TEST started ===")
-    # if corruption_type is None:
-    #     corruption_type = ["none"]
 
     # This should be moved to configuration and not hard coded
     target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
 
     results = []
 
-    # -----------------------------------------------------------------------------
-    # Loop through all samples in the checkpoint batch (cp_batch)
-    # and send the preprocessing of corruptions and sample healt analysis
-    # to a pool worker
-    # -----------------------------------------------------------------------------
-    for (corr_audio_list, metadata, ref, t_prep_s)  in pool.imap(prep_sample, (_sample_decoder(s) for s in cp_batch)):
-
+    timer_wait_start = time.perf_counter()
+    for (corr_audio_list, metadata, ref, t_prep_s)  in prepped_batch:
+        timer_wait_stop = time.perf_counter()
+        t_wait_s = timer_wait_stop - timer_wait_start
         # -----------------------------------------------------------------------------
         # Perform transcriptions
         # -----------------------------------------------------------------------------
@@ -224,9 +237,12 @@ def run_benchmark_test(transcribers, pool, cp_batch, n_samples=10):   # no noise
                 "n_items": len(corr_audio_list),
                 "audio_s": sum(data["duration_s"] for data in metadata),
                 "t_infer_s": t_infer_s,
-                "t_score_s": t_score_s
+                "t_score_s": t_score_s,
+                "t_wait_s": t_wait_s
             }
             print_timing(record)
+
+        timer_wait_start = time.perf_counter()
 
 
     print(f" === RUN BENCHMARK TEST finished ===")
@@ -236,7 +252,7 @@ def run_benchmark_test(transcribers, pool, cp_batch, n_samples=10):   # no noise
 
 
 
-def run_checkpoint_inference(
+def run_checkpoint_loop(
         transcribers: list,
         pool,
         iterator,
@@ -320,13 +336,28 @@ def run_checkpoint_inference(
             else:
                 print("Non-contiguous checkpoints found; ignoring resume to keep sampling deterministic.")
 
+
+        # -----------------------------------------------------------------------------
         # Generate and process checkpoints
-        for cp_batch in checkpoint_iterator(limited_iterator, checkpoint_size=config.CHECKPOINT_SIZE):
+        # -----------------------------------------------------------------------------
+        cp_batches = checkpoint_iterator(limited_iterator, checkpoint_size=config.CHECKPOINT_SIZE)
+
+        current_batch, t_currFetch_s = _fetch(cp_batches)          # raw samples of checkpoint k
+        current_prepped = _start_prep(pool, current_batch)  # workers start on k now
+
+        while current_batch is not None:
+            # Prefetch: workers queue k+1 behind k
+            next_batch, t_nextFetch_s = _fetch(cp_batches)
+            next_prepped = _start_prep(pool, next_batch)
+
             print(f"\n=== Checkpoint #{checkpoint_idx} ===")
             cp_file_key = f"{checkpoint_prefix}{checkpoint_idx:04d}.pkl"
 
+            # -----------------------------------------------------------------------------
             # === EXECUTION OF THE TRANSCRIPTION TASK ===
-            checkpoint_results = run_benchmark_test(transcribers, pool, cp_batch, n_samples=n)
+            # -----------------------------------------------------------------------------
+            # Inference on k
+            checkpoint_results = run_inference(transcribers, current_prepped, n_samples=n)
 
             timer_checkpoints_start = time.perf_counter()
 
@@ -339,12 +370,16 @@ def run_checkpoint_inference(
             record = {
                 "event": "checkpoint",
                 "checkpoint_idx": checkpoint_idx,
-                "seconds": t_chkpnt_s
+                "seconds": t_chkpnt_s,
+                "t_fetch_s": t_currFetch_s
             }
             print_timing(record)
 
             checkpoint_idx += 1
-            sample_counter += len(cp_batch)
+            sample_counter += len(current_batch)
+
+            # Shift batch to next
+            current_batch, current_prepped, t_currFetch_s = next_batch, next_prepped, t_nextFetch_s
 
 
         # === BUILD ONE FINAL DATA FILE ===
@@ -382,3 +417,4 @@ def run_checkpoint_inference(
         print_timing(record)
 
     return results
+

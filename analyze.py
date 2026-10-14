@@ -83,6 +83,14 @@ def analyse_run(run_dir, price):
     # Newer runs log prep once per sample in its own "prep" event, shared by all
     # models. Older runs (e.g. bs_sweep1) carry t_prep_s on each "sample" record.
     preps = [t for t in timing if t.get("event") == "prep"]
+    # With prep running in worker processes, what adds to wall time is how long the
+    # main process waited for each prepped sample (t_wait_s), not the prep itself.
+    # It comes from "wait" events, or from t_wait_s on the "sample" records, where
+    # every model of a sample carries the same value, so keep one per sample.
+    waits = {}
+    for t in timing:
+        if t.get("event") in ("wait", "sample") and "t_wait_s" in t:
+            waits.setdefault(t.get("sample_idx"), t["t_wait_s"])
     gpu = read_gpu(run_dir / "gpu.csv")
     cpu = read_cpu(run_dir / "cpu.csv")
 
@@ -95,12 +103,20 @@ def analyse_run(run_dir, price):
     infer = sum(s.get("t_infer_s", 0) for s in samples)
     score = sum(s.get("t_score_s", 0) for s in samples)
     fixed = sum(p.get("seconds", 0) for p in phases)
-    work = prep + infer + score
+    wait = sum(waits.values()) if waits else None
+    first_wait = next(iter(waits.values()), None)
+    # Time the main process spends pulling the next checkpoint's rows from the
+    # dataset stream; it blocks, so it counts as work. Logged on "checkpoint" records.
+    fetches = [c["t_fetch_s"] for c in ckpts if "t_fetch_s" in c]
+    fetch = sum(fetches) if fetches else None
+    work = (wait if waits else prep) + infer + score + (fetch or 0)
     r.update({
         "n_samples": len(samples) or None, "n_inferences": n_items, "audio_s": audio_s,
         "fixed_s": fixed if phases else None,
         "prep_s": prep if samples else None, "infer_s": infer if samples else None,
         "score_s": score if samples else None,
+        "wait_s": wait, "fetch_s": fetch, "wait_first_s": first_wait,
+        "wait_steady_s": wait - first_wait if waits else None,
         "checkpoint_s": sum(c.get("seconds", 0) for c in ckpts) if ckpts else None,
         "overhead_s": wall - work - fixed if samples else None,
         "gpu_share_of_work": infer / work if work else None,
@@ -117,7 +133,14 @@ def analyse_run(run_dir, price):
     r["rtf"] = steady_wall / audio_s if audio_s else None
     r["rtf_infer_only"] = infer / audio_s if audio_s and samples else None
 
-    if preps:
+    if waits:
+        # One sample = the wait for its prep plus infer and score for every model.
+        by_sample = dict(waits)
+        for s in samples:
+            by_sample[s.get("sample_idx")] = (by_sample.get(s.get("sample_idx"), 0)
+                                              + s.get("t_infer_s", 0) + s.get("t_score_s", 0))
+        per_sample = list(by_sample.values())
+    elif preps:
         # One sample = its prep plus infer and score for every model.
         by_sample = {}
         for p in preps:
@@ -151,7 +174,7 @@ def analyse_run(run_dir, price):
 
 
 AGG_FIELDS = ["wall_s", "steady_inf_per_s", "s_per_inf", "speedup_vs_m1", "audio_s_per_s", "rtf",
-              "rtf_infer_only", "gpu_share_of_work", "prep_s", "infer_s", "overhead_s",
+              "rtf_infer_only", "gpu_share_of_work", "prep_s", "wait_s", "wait_steady_s", "fetch_s", "infer_s", "overhead_s",
               "sample_p50_s", "sample_p90_s", "sample_p99_s", "infer_p50_s", "infer_p99_s",
               "gpu_util_mean", "gpu_util_p95", "gpu_busy_frac", "gpu_mem_peak_mib",
               "gpu_power_mean_w", "cpu_pct_mean", "usd_per_audio_hour", "usd_per_1k_inf",
@@ -213,17 +236,22 @@ def write_md(path, sweep, aggs, runs, args):
                       + (f"; run-to-run spread on the winner is {spread:.0%}, so gaps smaller "
                          f"than that are noise." if spread else "; add REPEATS≥2 to see run-to-run noise.")]
         if best.get("gpu_share_of_work") is not None:
-            lines += [f"GPU inference is {best['gpu_share_of_work']:.0%} of per-sample time; "
-                      f"the rest is CPU preprocessing and scoring."]
+            if best.get("wait_s") is not None:
+                lines += [f"GPU inference is {best['gpu_share_of_work']:.0%} of per-sample time; "
+                          f"the rest is waiting for prep workers ({fmt(best['wait_s'], 1)} s, "
+                          f"{fmt(best['wait_steady_s'], 1)} s after the first sample) and scoring."]
+            else:
+                lines += [f"GPU inference is {best['gpu_share_of_work']:.0%} of per-sample time; "
+                          f"the rest is CPU preprocessing and scoring."]
         lines += [""]
     lines += ["| " + " | ".join(c[1] for c in COLS) + " |", "|" + "---|" * len(COLS)]
     for a in aggs:
         lines.append("| " + " | ".join(fmt(a.get(k), nd) for k, _, nd in COLS) + " |")
     lines += ["", "## Runs", "",
-              "| Run | Exit | Wall s | Fixed s | Prep s | Infer s | Score s | Overhead s |", "|---|---|---|---|---|---|---|---|"]
+              "| Run | Exit | Wall s | Fixed s | Prep s | Wait s | Fetch s | Infer s | Score s | Overhead s |", "|---|---|---|---|---|---|---|---|---|---|"]
     for r in runs:
         lines.append(f"| {r['run_id']} | {r['exit_code']} | {fmt(r['wall_s'], 1)} | {fmt(r['fixed_s'], 1)} | "
-                     f"{fmt(r['prep_s'], 1)} | {fmt(r['infer_s'], 1)} | {fmt(r['score_s'], 1)} | {fmt(r['overhead_s'], 1)} |")
+                     f"{fmt(r['prep_s'], 1)} | {fmt(r['wait_s'], 1)} | {fmt(r['fetch_s'], 1)} | {fmt(r['infer_s'], 1)} | {fmt(r['score_s'], 1)} | {fmt(r['overhead_s'], 1)} |")
     path.write_text("\n".join(lines) + "\n")
     return lines
 

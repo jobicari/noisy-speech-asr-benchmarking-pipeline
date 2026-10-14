@@ -9,9 +9,9 @@ from asr_pipeline_benchmark.audio_analysis import analyze_asr_audio_health
 
 _corruptions = None  # one per worker process
 
-def init_worker(test_type):
+def init_worker(test_type, ir):
     global _corruptions
-    lst = CorruptionListFull() if test_type in ("fullDr", "fullRun") else CorruptionListShort()
+    lst = CorruptionListFull(ir) if test_type in ("fullDr", "fullRun") else CorruptionListShort()
     _corruptions = lst.corruptions
 
 

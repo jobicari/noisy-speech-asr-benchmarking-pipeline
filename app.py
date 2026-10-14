@@ -2,19 +2,19 @@ import os
 import time
 import multiprocessing as mp
 from asr_pipeline_benchmark.configuration import Config
-# import pandas as pd
 config = Config()
-
-from asr_pipeline_benchmark.storage import LocalStorage, GCSStorage
-from asr_pipeline_benchmark.models import load_transcriber_engine, run_checkpoint_inference
-from asr_pipeline_benchmark.data import get_speech_dataset
-from asr_pipeline_benchmark.utility import generate_run_label, print_timing
-from asr_pipeline_benchmark.prep import init_worker
-
 
 
 if __name__ == "__main__":
+    from asr_pipeline_benchmark.utility import generate_run_label, print_timing
+    from asr_pipeline_benchmark.models import load_transcriber_engine, run_checkpoint_loop
+    from asr_pipeline_benchmark.storage import LocalStorage, GCSStorage
+    from asr_pipeline_benchmark.data import get_speech_dataset
+    from asr_pipeline_benchmark.preprocessing import extract_ir_from_mit_dataset
+    from asr_pipeline_benchmark.prep import init_worker
+
     dataset = get_speech_dataset()
+    mit_ir, _ = extract_ir_from_mit_dataset(ir_idx=251)
 
     # ----------------------------------------------------------------------------------------
     # Load storage interface accoring to the config
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     # SPAWN POOL OF WORKERS
     # ----------------------------------------------------------------------------------------
     ctx = mp.get_context('spawn')
-    with ctx.Pool(config.N_PREP_WORKERS, initializer=init_worker, initargs=(config.TEST_TYPE,)) as pool:
+    with ctx.Pool(config.N_PREP_WORKERS, initializer=init_worker, initargs=(config.TEST_TYPE, mit_ir)) as pool:
         # ----------------------------------------------------------------------------------------
         # LOAD TRANSCRIBER ENGINE
         # ----------------------------------------------------------------------------------------
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         # ----------------------------------------------------------------------------------------
         # RUN INFERENCE
         # ----------------------------------------------------------------------------------------
-        run_checkpoint_inference(
+        run_checkpoint_loop(
             transcribers,
             pool,
             iterator,
@@ -74,7 +74,6 @@ if __name__ == "__main__":
             storageInterface,
             clear_cache=True
         )
-        iterator.close()
 
     print(f"RUN COMPLETED SUCCESSFULLY", flush=True)
 

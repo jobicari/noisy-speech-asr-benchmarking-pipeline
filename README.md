@@ -1,6 +1,6 @@
 # Noisy-Speech ASR Benchmarking Pipeline
 
-Benchmarks how robust Whisper speech-recognition models are to degraded audio. For each speech sample, the pipeline creates a set of corrupted versions (noise, reverb, dropouts, codecs, packet loss, band limiting, clipping), transcribes every version with one or more models, and records WER/CER plus audio-health metrics for each one.
+Benchmarks how robust speech-recognition models (the Whisper family, plus wav2vec2 as a contrast) are to degraded audio. For each speech sample, the pipeline creates a set of corrupted versions (noise, reverb, dropouts, codecs, packet loss, band limiting, clipping), transcribes every version with one or more models, and records WER/CER plus audio-health metrics for each one.
 
 It runs in two places:
 
@@ -20,6 +20,10 @@ It runs in two places:
 - **Reproducible corruptions.** numpy is re-seeded per sample and per corruption from `SEED`, so a given sample always gets the same noise, whichever worker processes it.
 - **Timing instrumentation.** Structured `[TIMING]` JSON lines (see [Timing records](#timing-records)), read by `run_sweep.sh` and `analyze.py`.
 - **Checkpoint and resume.** Results are saved every `CHECKPOINT_SIZE` samples. An interrupted run resumes from the last complete checkpoint.
+- **Thread caps.** `OMP/OPENBLAS/MKL/NUMBA_NUM_THREADS=2` stop BLAS and numba thread pools from oversubscribing the CPU. This cut inference by 25% on the A10.
+- **Cross-sample batching (optional).** `SAMPLES_PER_CALL=K` sends the clips of K samples to each model in one call. It gave no speed-up on the A10, so keep the default of 1.
+- **Non-Whisper models.** `load_hf_transcriber` detects the model type. Whisper gets its generation config (English, transcribe). CTC models such as wav2vec2 get a plain ASR pipeline.
+- **Fair text normalization.** References and transcripts both go through Whisper's `EnglishTextNormalizer` (lowercase, no punctuation, numbers as digits, standard spellings and abbreviations), so a model that writes "20" or "Mr." is not penalised against references that spell them out. WER from runs before this change is not comparable with later runs.
 
 ### Measured so far
 **A10, batch-size sweep** (`bs_sweep1`, fullDr, 20 samples, 2 models, 2 repeats, before the worker pool):
@@ -35,10 +39,40 @@ Decision: `BATCH_SIZE=22`. After that, CPU prep was the bottleneck, which is why
 
 **M1 Pro, worker pool + prefetch** (fullDr, 10 samples, 1 worker, `CHECKPOINT_SIZE=2`): 423 s wall, of which 412 s is inference. After the first sample the main process never waits for prep (`t_wait_s` = 0). Startup is about 11 s: 7.7 s for the first dataset fetch plus 3.4 s for the first prep. On the M1 the run is limited by inference, so 1 worker is enough.
 
+**A10 sweeps after the worker pool** (fullDr, 20 samples, 2 models, `BATCH_SIZE=22`, 2 repeats each):
+
+| Sweep | Config | Wall s | Inference s | Note |
+|---|---|---|---|---|
+| `worker_sweep_bs22` | 1 / 2 / 4 workers | 90–93 | 51–55 | All the same; `wait_s` ≈ 0 after the first sample from 1 worker up. −33% vs `bs_sweep1` |
+| `thread_caps` | 4 workers, no caps | 91.6 | 51.5 | Workers' BLAS/numba threads compete with the main process (~800% CPU) |
+| `thread_caps` | 4 workers, caps = 1 | 80.8 | 41.5 | |
+| `thread_caps` | 4 workers, caps = 2 | 78.6 | 38.6 | **Chosen.** CPU ~170% |
+| `spc_sweep1` | `SAMPLES_PER_CALL` = 1 / 2 / 4 (`BATCH_SIZE` 22 / 44 / 88) | 73–92 | 38.1 / 37.8 / 37.8 | No gain. VRAM 4.7 / 7.0 / 11.4 GB. First wait grows with K |
+
+Decision: `N_PREP_WORKERS=4`, thread caps of 2, `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`. That gives about 15 inferences/s, a projection of 0.8 h and about $1.05 for 1000 samples × 22 corruptions × 2 models.
+
+Where the time goes now (per 20-sample run): about 38 s inference, 15–33 s fixed (model download and load, see the HF cache note below), about 14 s unexplained overhead, and about 6 s first wait plus fetch. The GPU is only ~36% used and bigger batches don't help, so the inference time is probably the HF pipeline's per-clip CPU work and the token-by-token decode loop (inferred, not profiled).
+
 ### Next
-1. Worker sweep on the A10: `N_PREP_WORKERS` = 1, 4, 8, 16 under the `bs_sweep1` conditions, compared with the 137 s baseline (see [Benchmark sweeps](#benchmark-sweeps-on-lambda)).
-2. Add more models to the model lists.
-3. Later: GitHub Container Registry instead of building on each instance, and parallel model inference (deferred until the worker gains are measured).
+1. Model comparison with 7 HF models (see below). Smoke run on Lambda to get per-model timings, then the full run.
+2. Profile one inference call to see where the 38 s goes.
+3. If inference time matters with 7 models: run two models at once in separate processes, since the GPU is two-thirds idle.
+4. Later: GitHub Container Registry instead of building on each instance.
+
+### Model comparison
+The research question is how noise robustness scales with model size, with one model trained differently as a contrast:
+
+| Model | Params | Why |
+|---|---|---|
+| `openai/whisper-tiny` | 39M | Size curve |
+| `openai/whisper-base` | 74M | Size curve |
+| `openai/whisper-small` | 244M | Size curve |
+| `openai/whisper-medium` | 769M | Size curve |
+| `openai/whisper-large-v3` | 1.55B | Size curve |
+| `openai/whisper-large-v3-turbo` | 809M | large-v3 encoder with a 4-layer decoder: does the speed trick cost robustness? |
+| `facebook/wav2vec2-large-960h-lv60-self` | 317M | Fine-tuned on LibriSpeech (in-domain for the test set). Expected to be very good on clean audio and to drop sharply under noise |
+
+wav2vec2 only runs on the HF backend. The medium and large models are much slower than turbo, because their decoders have 24–32 layers instead of 4.
 
 ---
 
@@ -53,8 +87,9 @@ app.py
       for each checkpoint of CHECKPOINT_SIZE samples:
         fetch checkpoint k+1 from the stream, start its prep in the pool (prefetch)
         run_inference on checkpoint k:
-          for each prepped sample (in order):          ← main process waits here if prep lags
-            for each model: transcribe all corruptions in one batch, score WER/CER
+          for each group of SAMPLES_PER_CALL prepped samples (in order):   ← main process waits here if prep lags
+            for each model: transcribe all clips of the group in one call,
+                            split back per sample, score WER/CER
         save checkpoint k
       concatenate checkpoints into one results file
 ```
@@ -93,13 +128,15 @@ Everything is set through environment variables. Locally they come from `.env` (
 |---|---|---|
 | `INFERENCE_BACKEND` | `hf` / `mlx` | Backend. `mlx` only on Apple Silicon |
 | `REQUIRE_CUDA` | `True` | HF path raises if no CUDA device (set `False` for CPU/MPS testing) |
-| `HF_MODELS` | `openai/whisper-small,openai/whisper-large-v3-turbo` | Comma-separated, no quotes |
+| `HF_MODELS` | `openai/whisper-small,openai/whisper-large-v3-turbo` | Comma-separated, no quotes. Whisper and CTC models (wav2vec2) both work. It can't be passed through `run_sweep.sh` (the script splits on commas), so set it in `.env.docker` |
 | `MLX_MODELS` | `mlx-community/whisper-small-mlx,mlx-community/whisper-large-v3-turbo` | Comma-separated, no quotes |
 | `TEST_TYPE` | `smallDr` / `fullDr` / `fullRun` | Required, no default |
 | `NUMBER_OF_SAMPLES` | `20` | Samples taken from the stream |
 | `BATCH_SIZE` | `22` | Inference batch size (HF only; MLX loops one at a time) |
 | `CHECKPOINT_SIZE` | `50` | Samples per checkpoint, which is also the prefetch unit |
-| `N_PREP_WORKERS` | `1` to `16` | Size of the prep pool |
+| `N_PREP_WORKERS` | `1` to `16` | Size of the prep pool. `4` on the A10 |
+| `SAMPLES_PER_CALL` | `1` | Prepped samples whose clips go into one model call. Groups never cross a checkpoint; the last group of a checkpoint can be smaller. Set `BATCH_SIZE` to 22 × K to match |
+| `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMBA_NUM_THREADS` | `2` | Thread caps for every process (workers and main). Use `2` on the A10 |
 | `SEED` | `42` | Base seed for the corruptions |
 | `RUN_POSTFIX` | `bs22_w4_r1` | Appended to the run label. Use a new one for every benchmark run |
 | `FORCE_RETRAIN` | `False` | `True` ignores a cached results file with the same label |
@@ -173,6 +210,14 @@ scp -i ~/.ssh/lambda_key /path/to/your/gcs-key.json ubuntu@<ip>:~/gcs-key.json
 ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 644 ~/gcs-key.json   # container user has a different UID
 ```
 
+Re-copy `.env.docker` whenever you change it on the Mac, for example after editing `HF_MODELS`. Pulling the repo doesn't update it.
+
+Create a host folder for the Hugging Face model cache, once per instance:
+```bash
+mkdir -p ~/hf-cache && chmod 777 ~/hf-cache   # container user 'app' must be able to write
+```
+The Dockerfile sets `HF_HOME=/app/.cache/huggingface`, but every `docker run` starts a fresh container, so without a mount each run downloads every model again (several GB with medium and large-v3) and that time lands in "fixed" seconds. Mounting `~/hf-cache` there keeps the downloads between runs.
+
 ### 3. Build
 ```bash
 docker build -t asr-benchmark:lambda .
@@ -183,6 +228,7 @@ The image is `python:3.12-slim` with CUDA torch from the `cu126` wheel index, ff
 ```bash
 docker run --rm --gpus all --env-file .env.docker \
   -v ~/gcs-key.json:/secrets/key.json:ro \
+  -v ~/hf-cache:/app/.cache/huggingface \
   -e TEST_TYPE=fullDr -e NUMBER_OF_SAMPLES=20 -e BATCH_SIZE=22 \
   -e N_PREP_WORKERS=4 -e CHECKPOINT_SIZE=5 -e RUN_POSTFIX=single_$(date +%H%M) \
   asr-benchmark:lambda 2>&1 | tee run.log
@@ -192,14 +238,16 @@ Run long jobs inside `tmux` so a dropped SSH connection doesn't kill them.
 ### 5. Benchmark sweeps on Lambda
 `run_sweep.sh` runs the container once per config and repeat. For each run it records wall time, `nvidia-smi` samples every 500 ms, `docker stats` CPU, the container log, and the extracted `[TIMING]` lines.
 
-Worker sweep (comparable with `bs_sweep1`):
+Example: smoke run of the current setup (one config, one repeat):
 ```bash
 tmux new -s sweep
-CONFIGS="N_PREP_WORKERS=1 N_PREP_WORKERS=4 N_PREP_WORKERS=8 N_PREP_WORKERS=16" \
-ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json SWEEP_ID=worker_sweep1 \
-PER_RUN_ENV="RUN_POSTFIX=worker_sweep1_{run_id},BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=20,CHECKPOINT_SIZE=5" \
-REPEATS=2 ./run_sweep.sh
+CONFIGS="SAMPLES_PER_CALL=1" \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json SWEEP_ID=models7_smoke \
+EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
+PER_RUN_ENV="RUN_POSTFIX=models7_smoke_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=20,CHECKPOINT_SIZE=20,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+REPEATS=1 ./run_sweep.sh
 ```
+To compare settings, put one config per variant in `CONFIGS`, e.g. `CONFIGS="N_PREP_WORKERS=1 N_PREP_WORKERS=4"`, and use `REPEATS=2`.
 - `CONFIGS`: space-separated configs. One config is one or more `VAR=value` pairs joined by commas.
 - `PER_RUN_ENV`: applied to every run; `{run_id}` is replaced per run, which gives each run its own label.
 - **Always put the sweep name in `RUN_POSTFIX`** (`<sweep>_{run_id}`). `{run_id}` alone repeats across sweeps (e.g. `N_PREP_WORKERS_4_r1`), so a later run with the same label loads the earlier results from GCS instead of running inference. You can spot this by a very short wall time and `Loaded test results from cache` in `container.log`.
@@ -226,7 +274,7 @@ Local: `results/transcribe_cache/`. GCS: the same relative keys in the bucket.
 - `transcribe_cache/{run_label}.pkl`: the final results, a list of row dicts.
 - `transcribe_cache/checkpoint/{run_label}_CP_{nnnn}.pkl`: per-checkpoint results. They are deleted once the final file is written (`clear_cache=True`).
 
-Row fields: `idx` (sample id), `model`, `corr_type`, `wer`, `w_hits/subs/dels/ins`, `num_words`, `cer`, `c_hits/subs/dels/ins`, `num_chars`, `sample_analysis` (metrics + ASR flags), `ref`, `hyp`.
+Row fields: `idx` (sample id), `model`, `corr_type`, `wer`, `w_hits/subs/dels/ins`, `num_words`, `cer`, `c_hits/subs/dels/ins`, `num_chars`, `sample_analysis` (metrics + ASR flags), `ref`, `hyp`. `ref` and `hyp` are stored after normalization.
 
 ### Timing records
 Every line starting with `[TIMING] ` is a flushed JSON object with an ISO `ts`:
@@ -235,7 +283,7 @@ Every line starting with `[TIMING] ` is a flushed JSON object with an ISO `ts`:
 |---|---|---|
 | `phase` | model load (per model), finalize | `name`, `model` or `run_label`, `seconds` |
 | `prep` | once per sample, printed by the worker | `sample_idx`, `n_items`, `t_prep_s` |
-| `sample` | once per sample per model | `model`, `sample_idx`, `n_items`, `audio_s`, `t_infer_s`, `t_score_s`, `t_wait_s` (same value on every model's record) |
+| `sample` | once per sample per model | `model`, `sample_idx`, `n_items`, `audio_s`, `t_infer_s`, `t_score_s`, `t_wait_s`, `group_size`. With `SAMPLES_PER_CALL` > 1, `t_infer_s` is the call time split by clip count, and `t_wait_s` is charged to the first sample of each group (0 for the others). `t_wait_s` is the same on every model's record |
 | `checkpoint` | each checkpoint save | `checkpoint_idx`, `seconds` (save time), `t_fetch_s` (time to pull that checkpoint's rows from the stream) |
 
 With MLX, `model_load` is close to 0 because models load on the first transcribe call, so the load time lands in the first sample's `t_infer_s`.
@@ -248,6 +296,8 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **Key file unreadable in the container:** the container user's UID differs from the host's, so use `chmod 644` on the host copy.
 - **`docker: permission denied`** on a fresh instance: add the user to the `docker` group and reconnect.
 - **Architecture:** Mac builds are ARM64 and Lambda is x86_64. Build on the instance, or use `--platform linux/amd64`.
+- **Run label doesn't record code settings.** It hashes the model list but not `SAMPLES_PER_CALL`, the thread caps or the normalizer, so two runs that differ only in those share a label and the second loads the first one's results. Give each a different `RUN_POSTFIX`.
+- **The normalizer needs the Hub once:** `cleanup_pipeline` downloads `normalizer.json` from `openai/whisper-small` on first use in each process (cached afterwards).
 - **`docker builder prune`** wipes all build cache. Use `docker rmi <tag>` instead.
 - **Torch version:** must be ≥ 2.6 from the `cu126` index (transformers needs `torch.accelerator`).
 - **Spawn workers** re-import the main module. Heavy imports in `app.py` stay inside `if __name__ == "__main__":` so workers start light.

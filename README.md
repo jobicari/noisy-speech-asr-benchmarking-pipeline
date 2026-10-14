@@ -23,6 +23,8 @@ It runs in two places:
 - **Thread caps.** `OMP/OPENBLAS/MKL/NUMBA_NUM_THREADS=2` stop BLAS and numba thread pools from oversubscribing the CPU. This cut inference by 25% on the A10.
 - **Cross-sample batching (optional).** `SAMPLES_PER_CALL=K` sends the clips of K samples to each model in one call. It gave no speed-up on the A10, so keep the default of 1.
 - **Non-Whisper models.** `load_hf_transcriber` detects the model type. Whisper gets its generation config (English, transcribe). CTC models such as wav2vec2 get a plain ASR pipeline.
+- **Unattended runs.** `run_and_terminate.sh` runs a sweep, analyses it, uploads it to GCS, verifies the upload and terminates the instance. `progress.sh` shows live progress and ETA (see [Unattended runs](#6-unattended-runs-progress-upload-terminate)).
+- **HF model cache on the host.** `~/hf-cache` is mounted into the container, so models are downloaded once per instance instead of once per run.
 - **Fair text normalization.** References and transcripts both go through Whisper's `EnglishTextNormalizer` (lowercase, no punctuation, numbers as digits, standard spellings and abbreviations), so a model that writes "20" or "Mr." is not penalised against references that spell them out. WER from runs before this change is not comparable with later runs.
 
 ### Measured so far
@@ -53,11 +55,38 @@ Decision: `N_PREP_WORKERS=4`, thread caps of 2, `BATCH_SIZE=22`, `SAMPLES_PER_CA
 
 Where the time goes now (per 20-sample run): about 38 s inference, 15–33 s fixed (model download and load, see the HF cache note below), about 14 s unexplained overhead, and about 6 s first wait plus fetch. The GPU is only ~36% used and bigger batches don't help, so the inference time is probably the HF pipeline's per-clip CPU work and the token-by-token decode loop (inferred, not profiled).
 
+**A10, 7 models** (fullDr, 4 workers, thread caps 2, `BATCH_SIZE=22`, HF cache mounted):
+
+| Run | Samples | Wall s | Fixed s | Inference s | Inf/s | GPU util | Note |
+|---|---|---|---|---|---|---|---|
+| `models7_smoke` | 20 | 220 | 68 | 130 | 20.2 | 46% | First run fills the HF cache (download in fixed time) |
+| `models7_100` | 100 | 672 | 15 | 630 | 23.4 | 74% | Cache reused. Overhead stays ~16 s, so it is per run, not per sample |
+
+Both runs show a VRAM peak of 20.5 GB, but a stuck container from an earlier run was still on the GPU at the time. With it gone, the 7 models use about 15 GB.
+
+Inference seconds per model (`models7_smoke`, 20 samples × 22 corruptions):
+
+| Model | Infer s |
+|---|---|
+| whisper-large-v3 | 40.2 |
+| whisper-large-v3-turbo | 26.4 |
+| whisper-medium | 24.3 |
+| whisper-tiny | 12.0 |
+| whisper-small | 11.5 |
+| whisper-base | 11.0 |
+| wav2vec2-large-960h-lv60-self | 4.5 |
+
+- Tiny, base and small all take ~11 s although they differ 6× in size, so that is a fixed per-call cost. wav2vec2, which has no token-by-token decoding, takes 4.5 s, which points at the Whisper decode loop (inferred, not profiled).
+- Turbo is slower than medium: it keeps large-v3's full 32-layer encoder, and with short transcripts the encoder dominates.
+- Projection: 1000 samples ≈ 1.8 h / $2.36, 2000 samples ≈ 3.6 h / $4.70.
+
+### In progress
+- **`fullrun2000`:** fullRun, 2000 samples, 7 models (308,000 inferences), launched with `run_and_terminate.sh`. Results go to `gs://<your-bucket>/lambda_bench_runs/fullrun2000/` and the instance terminates itself after a verified upload. Afterwards, check the Lambda console that the instance is gone.
+
 ### Next
-1. Model comparison with 7 HF models (see below). Smoke run on Lambda to get per-model timings, then the full run.
-2. Profile one inference call to see where the 38 s goes.
-3. If inference time matters with 7 models: run two models at once in separate processes, since the GPU is two-thirds idle.
-4. Later: GitHub Container Registry instead of building on each instance.
+1. Analyse the 2000-sample results: WER/CER per model × corruption, the size curve, and wav2vec2 vs Whisper.
+2. Optional speed work: profile one Whisper call, or run two models at once in separate processes (the GPU still has headroom).
+3. Later: GitHub Container Registry instead of building on each instance.
 
 ### Model comparison
 The research question is how noise robustness scales with model size, with one model trained differently as a contrast:
@@ -160,7 +189,7 @@ conda activate asr-benchmark-pipe
 pip install -e .            # or prefix commands with PYTHONPATH=src
 ```
 
-`.env` needs at least `INFERENCE_BACKEND=mlx`, `SPEECH_DATASET`, `IR_DATASET` and `USE_CLOUD_STORAGE=False`.
+Create `.env` from the tracked template and fill in the placeholders (HF token, bucket, key path): `cp .env.example .env`. For local runs it needs at least `INFERENCE_BACKEND=mlx`, `SPEECH_DATASET`, `IR_DATASET` and `USE_CLOUD_STORAGE=False`.
 
 Smoke test (about 1 minute):
 ```bash
@@ -203,7 +232,7 @@ Notes:
 git clone -b exploration https://github.com/<your-github-user>/noisy-speech-asr-benchmarking-pipeline.git
 cd noisy-speech-asr-benchmarking-pipeline
 ```
-From the Mac, copy the secrets (they are gitignored):
+`.env.docker` is created on the Mac from the tracked template (`cp .env.docker.example .env.docker`, then fill in the HF token and bucket). From the Mac, copy the secrets (they are gitignored):
 ```bash
 scp -i ~/.ssh/lambda_key .env.docker ubuntu@<ip>:~/noisy-speech-asr-benchmarking-pipeline/
 scp -i ~/.ssh/lambda_key /path/to/your/gcs-key.json ubuntu@<ip>:~/gcs-key.json
@@ -271,16 +300,48 @@ How to read a worker sweep: `wait_s` should drop as workers increase until it re
 One-time setup per instance:
 1. Create an API key in the Lambda Cloud console (API keys page). Copy it to the instance:
    `scp -i ~/.ssh/lambda_key lambda-api-key ubuntu@<ip>:~/lambda-api-key && ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 600 ~/lambda-api-key`. Revoke the key when you no longer need it.
-2. The script finds this instance's ID by matching its public IP in the Lambda API. If that fails, set `LAMBDA_INSTANCE_ID` (shown in the console).
+2. Check the key works. It should print this instance's `id` and `ip` (ignore the nested UUID-style `id`s, which belong to attached items):
+   ```bash
+   curl -fsS -u "$(cat ~/lambda-api-key):" https://cloud.lambdalabs.com/api/v1/instances | python3 -m json.tool | grep -E '"(id|ip)"'
+   ```
+3. The script finds this instance's ID by matching its public IP (`curl https://checkip.amazonaws.com`) in that list. If that fails, set `LAMBDA_INSTANCE_ID` (shown in the console).
 
-Full run:
+Tested end to end: the ID lookup and terminate call were run on a throwaway instance, which found its own ID (not the main instance's) and was terminated. The upload and verification were tested with `TERMINATE=0` on a 10-sample run.
+
+Before starting, `docker ps` must list nothing: a leftover container shares the GPU and slows the run.
+
+Test run (no terminate, a few minutes):
 ```bash
-tmux new -s run
-SWEEP_ID=fullrun1 CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=154000 \
+SWEEP_ID=automation_test TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
-PER_RUN_ENV="RUN_POSTFIX=fullrun1_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=1000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+PER_RUN_ENV="RUN_POSTFIX=automation_test_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=10,CHECKPOINT_SIZE=5,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
 REPEATS=1 ./run_and_terminate.sh
+```
+It should end with `VERIFIED N files in gs://.../lambda_bench_runs/automation_test/`.
+
+Full run (2000 samples × 22 corruptions × 7 models = 308,000 inferences, about 3.6 h):
+```bash
+tmux new -s run
+SWEEP_ID=fullrun2000 CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=308000 \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json \
+EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
+PER_RUN_ENV="RUN_POSTFIX=fullrun2000_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+REPEATS=1 ./run_and_terminate.sh
+```
+1. The first lines must say `Will terminate instance <id>`.
+2. `Ctrl-b c`, then `watch -n 30 ./progress.sh`, and check that samples count up.
+3. `Ctrl-b d` to detach, then close SSH. `tmux attach -t run` to come back.
+4. When the ETA has passed, check the Lambda console. If the instance is still there, terminate it by hand and read `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`.
+
+If the run is interrupted before the upload, rerun the same command: the run label is the same, so the app resumes from the last checkpoint.
+
+Manual terminate from inside an instance (what the script does):
+```bash
+API_KEY=$(tr -d '[:space:]' < ~/lambda-api-key)
+curl -fsS -u "$API_KEY:" -H "Content-Type: application/json" \
+  -d '{"instance_ids": ["<instance id>"]}' \
+  https://cloud.lambdalabs.com/api/v1/instance-operations/terminate
 ```
 - The API key and instance ID are checked **before** the sweep starts, so a setup mistake fails in seconds, not after hours.
 - The instance is terminated only if the upload is verified (every file present with the same size). If verification fails, it stays up so nothing is lost.
@@ -328,6 +389,8 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **Architecture:** Mac builds are ARM64 and Lambda is x86_64. Build on the instance, or use `--platform linux/amd64`.
 - **Run label doesn't record code settings.** It hashes the model list but not `SAMPLES_PER_CALL`, the thread caps or the normalizer, so two runs that differ only in those share a label and the second loads the first one's results. Give each a different `RUN_POSTFIX`.
 - **The normalizer needs the Hub once:** `cleanup_pipeline` downloads `normalizer.json` from `openai/whisper-small` on first use in each process (cached afterwards).
+- **Stuck containers:** a container that hangs keeps running (and holding GPU memory) after the sweep moves on, and its run never reaches finalize, so its checkpoints stay in the bucket. Run `docker ps` before every sweep and `docker stop <name>` anything left over.
+- **Local checkpoint listing** used to return every `.pkl` in the checkpoint folder, so a local run could resume from or merge another run's checkpoints. It now matches the run's own prefix (`storage.py`). GCS was never affected.
 - **`docker builder prune`** wipes all build cache. Use `docker rmi <tag>` instead.
 - **Torch version:** must be ≥ 2.6 from the `cu126` index (transformers needs `torch.accelerator`).
 - **Spawn workers** re-import the main module. Heavy imports in `app.py` stay inside `if __name__ == "__main__":` so workers start light.
@@ -335,6 +398,8 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **torchcodec's lazy `AudioDecoder`** can't be pickled, so samples are decoded in the main process (`_sample_decoder`) before going to the pool.
 
 ## Housekeeping
+- Personal notes with real values (bucket, paths, instance details) go in `MEMO.local.md`, which is gitignored (`*.local.md`).
 - Revoke or rotate the GitHub PAT used for cloning when you're done with an instance.
+- Revoke the Lambda API key when you no longer run unattended jobs. It can terminate any of your instances.
 - `notebooks/tests-asr-pipeline.ipynb` still uses the old API.
 - A transformers deprecation warning about passing `generation_config` alongside other kwargs is known and harmless.

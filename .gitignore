@@ -150,6 +150,11 @@ activemq-data/
 # Environments
 .env
 .env.*
+!.env.example
+!.env.docker.example
+
+# Personal notes with real values
+*.local.md
 .envrc
 .venv
 env/

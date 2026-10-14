@@ -145,22 +145,36 @@ def _fetch(batches):
 
 
 
+def _groups(it, k):
+    """Yield lists of up to k items from an iterator; the last one can be shorter."""
+    it = iter(it)
+    while group := list(islice(it, k)):
+        yield group
+
+
+
+
 def run_inference(transcribers, prepped_batch, n_samples=10):   # no noise
     """Function that runs the inference loop on a checkpoint batch of audio samples
         with a list of corruption type and run error metrics (WER, CER)
-        and return the results
+        and return the results.
+        Clips of SAMPLES_PER_CALL samples are sent to each model in one call.
     """
     print(f" === RUN BENCHMARK TEST started ===")
-
-    # This should be moved to configuration and not hard coded
-    target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
-
     results = []
 
     timer_wait_start = time.perf_counter()
-    for (corr_audio_list, metadata, ref, t_prep_s)  in prepped_batch:
+    for group in _groups(prepped_batch, config.SAMPLES_PER_CALL):
         timer_wait_stop = time.perf_counter()
         t_wait_s = timer_wait_stop - timer_wait_start
+
+        # Flatten the clips of all samples in the group, remember each sample's slice
+        all_audio, spans = [], []
+        for corr_audio_list, metadata, ref, t_prep_s in group:
+            start = len(all_audio)
+            all_audio.extend(corr_audio_list)
+            spans.append((start, len(all_audio)))
+
         # -----------------------------------------------------------------------------
         # Perform transcriptions
         # -----------------------------------------------------------------------------
@@ -168,85 +182,93 @@ def run_inference(transcribers, prepped_batch, n_samples=10):   # no noise
             # Start time for the GPU bound inference processes
             timer_infer_start = time.perf_counter()
 
-            transcriptions = transcriber(corr_audio_list, batch_size=config.BATCH_SIZE)
+            transcriptions = transcriber(all_audio, batch_size=config.BATCH_SIZE)
             model_name = transcriber.model_name.replace("/", "_")
 
             timer_infer_stop = time.perf_counter()
-            t_infer_s = timer_infer_stop - timer_infer_start
+            t_call_s = timer_infer_stop - timer_infer_start
 
-            # -----------------------------------------------------------------------------
-            # iterate over pipe output to retrieve the last metrics needed
-            # -----------------------------------------------------------------------------
-            # Start timer for the score process
-            timer_score_start = time.perf_counter()
-            for out, meta in zip(transcriptions, metadata):
-
-                hyp = cleanup_pipeline(out['text'])
-                # -----------------------------------------------------------------------------
-                # Word Level metrics - WER
-                # -----------------------------------------------------------------------------
-                wer_metrics = jiwer.process_words(ref, hyp)
-                wer = wer_metrics.wer
-                w_hits = wer_metrics.hits
-                w_subs = wer_metrics.substitutions
-                w_dels = wer_metrics.deletions
-                w_ins = wer_metrics.insertions
-                num_words = w_hits + w_subs + w_dels
-
+            # Split the outputs back per sample
+            for j, ((corr_audio_list, metadata, ref, t_prep_s), (a, b)) in enumerate(zip(group, spans)):
+                # Share of the call time by clip count, so per-sample sums stay right
+                t_infer_s = t_call_s * (b - a) / len(all_audio)
 
                 # -----------------------------------------------------------------------------
-                # Characeter Level metrics - CER
+                # iterate over pipe output to retrieve the last metrics needed
                 # -----------------------------------------------------------------------------
-                char_metrics = jiwer.process_characters(ref, hyp)
-                cer = char_metrics.cer
-                c_hits = char_metrics.hits
-                c_subs = char_metrics.substitutions
-                c_dels = char_metrics.deletions
-                c_ins = char_metrics.insertions
-                num_chars = c_hits + c_subs + c_dels
+                # Start timer for the score process
+                timer_score_start = time.perf_counter()
+                for out, meta in zip(transcriptions[a:b], metadata):
+                    results.append(_score(out['text'], ref, meta, model_name))
 
-                results.append({"idx": meta["idx"],
-                                "model": model_name,
-                                "corr_type": meta["corr_type"],
-                                "wer": wer,
-                                "w_hits": w_hits,
-                                "w_subs": w_subs,
-                                "w_dels": w_dels,
-                                "w_ins": w_ins,
-                                "num_words": num_words,
-                                "cer": cer,
-                                "c_hits": c_hits,
-                                "c_subs": c_subs,
-                                "c_dels": c_dels,
-                                "c_ins": c_ins,
-                                "num_chars": num_chars,
-                                "sample_analysis": meta["sample_analysis"],
-                                "ref": ref,
-                                "hyp": hyp})
+                timer_score_stop = time.perf_counter()
+                t_score_s = timer_score_stop - timer_score_start
 
-            timer_score_stop = time.perf_counter()
-            t_score_s = timer_score_stop - timer_score_start
-
-            # -----------------------------------------------------------------------------
-            # Log sample stats records
-            # -----------------------------------------------------------------------------
-            record = {
-                "event": "sample",
-                "model": model_name,
-                "sample_idx": metadata[0]['idx'],
-                "n_items": len(corr_audio_list),
-                "audio_s": sum(data["duration_s"] for data in metadata),
-                "t_infer_s": t_infer_s,
-                "t_score_s": t_score_s,
-                "t_wait_s": t_wait_s
-            }
-            print_timing(record)
+                # -----------------------------------------------------------------------------
+                # Log sample stats records
+                # -----------------------------------------------------------------------------
+                record = {
+                    "event": "sample",
+                    "model": model_name,
+                    "sample_idx": metadata[0]['idx'],
+                    "n_items": len(corr_audio_list),
+                    "audio_s": sum(data["duration_s"] for data in metadata),
+                    "t_infer_s": t_infer_s,
+                    "t_score_s": t_score_s,
+                    # The group waited once: charge the wait to its first sample only
+                    "t_wait_s": t_wait_s if j == 0 else 0.0,
+                    "group_size": len(group)
+                }
+                print_timing(record)
 
         timer_wait_start = time.perf_counter()
 
 
     print(f" === RUN BENCHMARK TEST finished ===")
     return results
+
+
+
+
+def _score(text, ref, meta, model_name):
+    """Clean one transcription and compute its word and character level metrics"""
+    hyp = cleanup_pipeline(text)
+    # -----------------------------------------------------------------------------
+    # Word Level metrics - WER
+    # -----------------------------------------------------------------------------
+    wer_metrics = jiwer.process_words(ref, hyp)
+    w_hits = wer_metrics.hits
+    w_subs = wer_metrics.substitutions
+    w_dels = wer_metrics.deletions
+    w_ins = wer_metrics.insertions
+
+    # -----------------------------------------------------------------------------
+    # Characeter Level metrics - CER
+    # -----------------------------------------------------------------------------
+    char_metrics = jiwer.process_characters(ref, hyp)
+    c_hits = char_metrics.hits
+    c_subs = char_metrics.substitutions
+    c_dels = char_metrics.deletions
+    c_ins = char_metrics.insertions
+
+    return {"idx": meta["idx"],
+            "model": model_name,
+            "corr_type": meta["corr_type"],
+            "wer": wer_metrics.wer,
+            "w_hits": w_hits,
+            "w_subs": w_subs,
+            "w_dels": w_dels,
+            "w_ins": w_ins,
+            "num_words": w_hits + w_subs + w_dels,
+            "cer": char_metrics.cer,
+            "c_hits": c_hits,
+            "c_subs": c_subs,
+            "c_dels": c_dels,
+            "c_ins": c_ins,
+            "num_chars": c_hits + c_subs + c_dels,
+            "sample_analysis": meta["sample_analysis"],
+            "ref": ref,
+            "hyp": hyp}
 
 
 

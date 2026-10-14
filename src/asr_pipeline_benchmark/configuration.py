@@ -136,6 +136,10 @@ class Config:
     N_PREP_WORKERS: int = field(
         default_factory=lambda: int(os.getenv("N_PREP_WORKERS", 1))
     )
+    # Number of prepped samples whose clips go into one model call
+    SAMPLES_PER_CALL: int = field(
+        default_factory=lambda: int(os.getenv("SAMPLES_PER_CALL", 1))
+    )
 
 
     def __post_init__(self):
@@ -163,6 +167,9 @@ class Config:
         self.TEST_TYPE = self.TEST_TYPE.strip()
         if self.TEST_TYPE not in ["smallDr", "fullDr", "fullRun"]:
             raise ValueError(f"TEST_TYPE must be either 'smallDr', 'fullDr' or 'fullRun'. Got {self.TEST_TYPE}")
+
+        if self.SAMPLES_PER_CALL < 1:
+            raise ValueError(f"SAMPLES_PER_CALL must be >= 1. Got {self.SAMPLES_PER_CALL}")
 
 
     @property

@@ -50,7 +50,7 @@ class LocalStorage(StorageBackend):
         file_prefix = Path(prefix).name
         if not dir_path.exists():
             return []
-        return [str(p) for p in dir_path.glob("*.pkl")]
+        return [str(p) for p in dir_path.glob(f"{file_prefix}*.pkl")]
 
     def delete(self, file_key: str):
         if Path(file_key).exists():

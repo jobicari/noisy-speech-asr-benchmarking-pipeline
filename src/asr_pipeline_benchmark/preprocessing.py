@@ -428,13 +428,9 @@ class CorruptionListShort:
 
 
 class CorruptionListFull:
-    _ir = None
 
-    def __init__(self):
-        if CorruptionListFull._ir is None:
-            CorruptionListFull._ir, _ = extract_ir_from_mit_dataset(ir_idx=251)
-
-        self.ir = CorruptionListFull._ir
+    def __init__(self, ir):
+        self.ir = ir
         self.corruptions: dict = {
             "none": lambda x: x,
             "WN_3snr": lambda x: add_white_noise(x, 3),

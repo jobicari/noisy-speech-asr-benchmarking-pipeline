@@ -19,7 +19,7 @@ class Config:
     SEED: int = field(default_factory=lambda: int(os.getenv("SEED", 42)))
 
     # Run type
-    TEST_TYPE: str = field(default_factory=lambda: os.getenv("TEST_TYPE", "smallDR"))
+    TEST_TYPE: str = field(default_factory=lambda: os.getenv("TEST_TYPE", ""))
     NUMBER_OF_SAMPLES: int = field(default_factory=lambda: int(os.getenv("NUMBER_OF_SAMPLES", 10)))
 
     # ----------------------------------------------------
@@ -154,7 +154,7 @@ class Config:
             Path(self.TRANSCRIBE_CACHE_DIR).mkdir(parents=True, exist_ok=True)
             Path(self.CHECKPOINT_DIR).mkdir(parents=True, exist_ok=True)
 
-        self.INFERENCE_BACKEND = self.INFERENCE_BACKEND.lower().strip("")
+        self.INFERENCE_BACKEND = self.INFERENCE_BACKEND.lower().strip()
         if self.INFERENCE_BACKEND not in ["mlx", "hf"]:
             raise ValueError(f"INFERENCE_BACKEND must be either 'mlx' or 'hf'. Got {self.INFERENCE_BACKEND}")
         if self.INFERENCE_BACKEND == "mlx" and not self.IS_APPLE_SILICON:

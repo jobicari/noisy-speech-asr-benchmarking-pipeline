@@ -265,6 +265,36 @@ What the report shows per config: steady-state inferences/s, audio seconds per s
 
 How to read a worker sweep: `wait_s` should drop as workers increase until it reaches about 0. The smallest worker count that gets there is the one to use. Ignore the "× M1" column: its baseline mixes two model sizes.
 
+### 6. Unattended runs: progress, upload, terminate
+`run_and_terminate.sh` wraps `run_sweep.sh` for long runs: sweep → `analyze.py` → upload the sweep folder to `gs://<bucket>/lambda_bench_runs/<SWEEP_ID>/` → verify every file → terminate the instance. Shutting down from inside the instance (`sudo shutdown`) does **not** stop Lambda billing; only terminating does.
+
+One-time setup per instance:
+1. Create an API key in the Lambda Cloud console (API keys page). Copy it to the instance:
+   `scp -i ~/.ssh/lambda_key lambda-api-key ubuntu@<ip>:~/lambda-api-key && ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 600 ~/lambda-api-key`. Revoke the key when you no longer need it.
+2. The script finds this instance's ID by matching its public IP in the Lambda API. If that fails, set `LAMBDA_INSTANCE_ID` (shown in the console).
+
+Full run:
+```bash
+tmux new -s run
+SWEEP_ID=fullrun1 CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=154000 \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json \
+EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
+PER_RUN_ENV="RUN_POSTFIX=fullrun1_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=1000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+REPEATS=1 ./run_and_terminate.sh
+```
+- The API key and instance ID are checked **before** the sweep starts, so a setup mistake fails in seconds, not after hours.
+- The instance is terminated only if the upload is verified (every file present with the same size). If verification fails, it stays up so nothing is lost.
+- Before terminating it waits `TERMINATE_DELAY` seconds (default 120); Ctrl-C in the tmux pane cancels. `TERMINATE=0` uploads without terminating.
+- The wrapper's own log is `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`, next to the sweep folder. It stays on the instance and is not uploaded.
+- The upload runs in the benchmark image (`upload_results.py` is mounted in), so nothing extra is installed on the host.
+
+Progress, in a second tmux pane (`Ctrl-b c`):
+```bash
+watch -n 30 ./progress.sh                                     # newest run under results/lambda_bench_runs
+./progress.sh results/lambda_bench_runs/fullrun1               # a specific sweep
+```
+It reads the live `container.log` and shows models, current checkpoint, samples done / total, rate, ETA, and how long ago the last sample finished. A resumed run counts the skipped samples. It uses GNU `find`, so it runs on the instance, not on macOS.
+
 ---
 
 ## Outputs

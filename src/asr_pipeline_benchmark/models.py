@@ -14,7 +14,7 @@ from asr_pipeline_benchmark.preprocessing import (
     add_real_reverberation,
     extract_ir_from_mit_dataset
 )
-from asr_pipeline_benchmark.audio_analysis import analyze_asr_audio_health
+from asr_pipeline_benchmark.prep import prep_sample
 
 import jiwer
 
@@ -120,65 +120,33 @@ def load_mlx_transcriber(model_id):
 #         return f"unknown ({module_name})"
 
 
+def _sample_decoder(sample):
+    """Fix lazy decodes of datasets by decoding the sample before sending it to the worker"""
+    audio = sample["audio"]
+    return {"id": sample["id"], "text": sample["text"],
+            "audio": {"array": audio["array"], "sampling_rate": audio["sampling_rate"]}}
 
 
-def run_benchmark_test(transcribers, cp_batch, n_samples=10, corruption_type=None):   # no noise
+def run_benchmark_test(transcribers, pool, cp_batch, n_samples=10):   # no noise
     """Function that runs the inference loop on a checkpoint batch of audio samples
         with a list of corruption type and run error metrics (WER, CER)
         and return the results
     """
     print(f" === RUN BENCHMARK TEST started ===")
-    if corruption_type is None:
-        corruption_type = ["none"]
+    # if corruption_type is None:
+    #     corruption_type = ["none"]
 
     # This should be moved to configuration and not hard coded
     target_snr = 3  # signal-to-noise ratio in dB to be added to the samples
 
     results = []
 
-    for idx, sample in enumerate(cp_batch):
-
-        # -----------------------------------------------------------------------------
-        # Perform Preprocessing (Corruptions and Sample Analysis)
-        # -----------------------------------------------------------------------------
-
-        # Start time for the CPU bound prep process
-        timer_prep_start = time.perf_counter()
-
-        audio_array = sample["audio"]["array"]
-        sample_rate = sample["audio"]["sampling_rate"]
-
-        corr_audio_list = []
-        metadata = []
-
-        # Compute ref once per sample
-        ref = cleanup_pipeline(sample["text"])
-
-        n_items = len(corruption_type.items())
-        for corr_type, corr_fn in corruption_type.items():
-            # counter+=1
-
-            corr_audio_array = corr_fn(audio_array)
-
-            # Build the list of raw audio file to send to the transcriber engine
-            corr_audio_list.append(corr_audio_array)
-
-            # Run audio health analysis
-            sample_analysis = analyze_asr_audio_health(corr_audio_array, sample_rate)
-            metadata.append({"idx": sample['id'],
-                             "corr_type": corr_type,
-                             "sample_analysis": sample_analysis})
-
-
-        timer_prep_stop = time.perf_counter()
-        t_prep_s = timer_prep_stop - timer_prep_start
-        record = {
-            "event": "prep",
-            "sample_idx": sample['id'],
-            "n_items": n_items,
-            "t_prep_s": t_prep_s
-        }
-        print_timing(record)
+    # -----------------------------------------------------------------------------
+    # Loop through all samples in the checkpoint batch (cp_batch)
+    # and send the preprocessing of corruptions and sample healt analysis
+    # to a pool worker
+    # -----------------------------------------------------------------------------
+    for (corr_audio_list, metadata, ref, t_prep_s)  in pool.imap(prep_sample, (_sample_decoder(s) for s in cp_batch)):
 
         # -----------------------------------------------------------------------------
         # Perform transcriptions
@@ -249,14 +217,12 @@ def run_benchmark_test(transcribers, cp_batch, n_samples=10, corruption_type=Non
             # -----------------------------------------------------------------------------
             # Log sample stats records
             # -----------------------------------------------------------------------------
-
-            audio_s = audio_array.shape[0]/sample_rate*n_items
             record = {
                 "event": "sample",
                 "model": model_name,
-                "sample_idx": sample['id'],
-                "n_items": n_items,
-                "audio_s": audio_s,
+                "sample_idx": metadata[0]['idx'],
+                "n_items": len(corr_audio_list),
+                "audio_s": sum(data["duration_s"] for data in metadata),
                 "t_infer_s": t_infer_s,
                 "t_score_s": t_score_s
             }
@@ -272,11 +238,12 @@ def run_benchmark_test(transcribers, cp_batch, n_samples=10, corruption_type=Non
 
 def run_checkpoint_inference(
         transcribers: list,
+        pool,
         iterator,
         run_label,
         n,
         storage: StorageBackend,
-        corruption_type: dict =None,
+        # corruption_type: dict =None,
         clear_cache=False
 ) -> list[dict]:
     """
@@ -305,8 +272,8 @@ def run_checkpoint_inference(
     print(f"===== Run Batch Checkpoint Inference on {n} samples =====")
     print(f"run_label: {run_label}")
 
-    if corruption_type is None:
-        corruption_type = ["none"]
+    # if corruption_type is None:
+    #     corruption_type = ["none"]
 
     run_file_key = f"{config.TRANSCRIBE_CACHE_DIR}/{run_label}.pkl"
     checkpoint_prefix = f"{config.CHECKPOINT_DIR}/{run_label}_CP_"
@@ -359,7 +326,7 @@ def run_checkpoint_inference(
             cp_file_key = f"{checkpoint_prefix}{checkpoint_idx:04d}.pkl"
 
             # === EXECUTION OF THE TRANSCRIPTION TASK ===
-            checkpoint_results = run_benchmark_test(transcribers, cp_batch, n_samples=n, corruption_type=corruption_type)
+            checkpoint_results = run_benchmark_test(transcribers, pool, cp_batch, n_samples=n)
 
             timer_checkpoints_start = time.perf_counter()
 

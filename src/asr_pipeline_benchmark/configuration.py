@@ -133,6 +133,10 @@ class Config:
         default_factory=lambda: os.getenv("FORCE_MPS", "False").lower() in ("true", "1", "yes")
     )
 
+    N_PREP_WORKERS: int = field(
+        default_factory=lambda: int(os.getenv("N_PREP_WORKERS", 1))
+    )
+
 
     def __post_init__(self):
         # Anchor project  root dynamically relative to config file location
@@ -155,6 +159,10 @@ class Config:
             raise ValueError(f"INFERENCE_BACKEND must be either 'mlx' or 'hf'. Got {self.INFERENCE_BACKEND}")
         if self.INFERENCE_BACKEND == "mlx" and not self.IS_APPLE_SILICON:
             raise ValueError(f"INFERENCE_BACKEND=mlx needs Apple Silicon. Use INFERENCE_BACKEND=hf on this machine.")
+
+        self.TEST_TYPE = self.TEST_TYPE.strip()
+        if self.TEST_TYPE not in ["smallDr", "fullDr", "fullRun"]:
+            raise ValueError(f"TEST_TYPE must be either 'smallDr', 'fullDr' or 'fullRun'. Got {self.TEST_TYPE}")
 
 
     @property

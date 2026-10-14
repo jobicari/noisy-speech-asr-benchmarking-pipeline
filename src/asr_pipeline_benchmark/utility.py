@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 import time
 import hashlib
+import zlib
 import numpy as np
 import pandas as pd
 from asr_pipeline_benchmark.configuration import Config
@@ -114,6 +115,20 @@ def expand_mfcc_results(df):
     # return expanded_cols
 
 
+
 def print_timing(record):
     utc_now = datetime.now(timezone.utc)
     print(f"[TIMING] {json.dumps({'ts': utc_now.isoformat(), **record})}", flush=True)
+
+
+
+def _sample_seed(sample_id):
+    """Generate a deterministic seed for a given sample ID"""
+    return (config.SEED + zlib.crc32(str(sample_id).encode())) % 2**32
+
+
+
+def _seed(sample_id, corr_type):
+    """Generate a deterministic seed for a given sample ID and correlation type"""
+    key = f"{sample_id}_{corr_type}".encode()
+    return (config.SEED + zlib.crc32(key)) % 2**32

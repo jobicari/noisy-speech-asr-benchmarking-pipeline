@@ -25,6 +25,9 @@ It runs in two places:
 - **Non-Whisper models.** `load_hf_transcriber` detects the model type. Whisper gets its generation config (English, transcribe). CTC models such as wav2vec2 get a plain ASR pipeline.
 - **Unattended runs.** `run_and_terminate.sh` runs a sweep, analyses it, uploads it to GCS, verifies the upload and terminates the instance. `progress.sh` shows live progress and ETA (see [Unattended runs](#6-unattended-runs-progress-upload-terminate)).
 - **HF model cache on the host.** `~/hf-cache` is mounted into the container, so models are downloaded once per instance instead of once per run.
+- **Clips over 30 s.** Whisper only takes 30 s per call. `WHISPER_LONGFORM=chunked` (default) splits longer clips into overlapping 30 s chunks, decodes them in parallel and stitches the text back together; clips of 30 s or less are unchanged. `WHISPER_LONGFORM=sequential` uses Whisper's own long-form decoding with timestamps instead (more accurate on long audio, but it also changes decoding of short clips). Each result row stores `duration_s`. LibriSpeech test-clean has 7 clips over 30 s and 4 more just under, which reverb can push over.
+- **Long-clip side run.** After the main sweep, `run_and_terminate.sh` finds every sample with a clip over 30 s (`find_long_ids.py`) and reruns them on the Whisper models with `WHISPER_LONGFORM=sequential`, so chunked and sequential decoding can be compared on the same audio.
+- **Crash guard and notifications.** `run_and_terminate.sh` only terminates the instance if every run exited 0 and logged `RUN COMPLETED SUCCESSFULLY`. With `NTFY_TOPIC` set, it pushes start, failure and done alerts to the ntfy app.
 - **Fair text normalization.** References and transcripts both go through Whisper's `EnglishTextNormalizer` (lowercase, no punctuation, numbers as digits, standard spellings and abbreviations), so a model that writes "20" or "Mr." is not penalised against references that spell them out. WER from runs before this change is not comparable with later runs.
 
 ### Measured so far
@@ -81,7 +84,7 @@ Inference seconds per model (`models7_smoke`, 20 samples × 22 corruptions):
 - Projection: 1000 samples ≈ 1.8 h / $2.36, 2000 samples ≈ 3.6 h / $4.70.
 
 ### In progress
-- **`fullrun2000`:** fullRun, 2000 samples, 7 models (308,000 inferences), launched with `run_and_terminate.sh`. Results go to `gs://<your-bucket>/lambda_bench_runs/fullrun2000/` and the instance terminates itself after a verified upload. Afterwards, check the Lambda console that the instance is gone.
+- **`fullrun2000`:** fullRun, 2000 samples, 7 models (308,000 inferences). The first attempt crashed after about 36 minutes on the first clip over 30 s (`2094-142345-0008`, 31.6 s), and the old script terminated the instance anyway. Both bugs are fixed. Its checkpoints are in the bucket, so the relaunch (`SWEEP_ID=fullrun2000_resume`, same `RUN_POSTFIX`) resumes from them. Its logs are in `gs://<your-bucket>/lambda_bench_runs/fullrun2000/`. Combine the timing of both attempts with `analyze.py --combine`.
 
 ### Next
 1. Analyse the 2000-sample results: WER/CER per model × corruption, the size curve, and wav2vec2 vs Whisper.
@@ -166,6 +169,8 @@ Everything is set through environment variables. Locally they come from `.env` (
 | `N_PREP_WORKERS` | `1` to `16` | Size of the prep pool. `4` on the A10 |
 | `SAMPLES_PER_CALL` | `1` | Prepped samples whose clips go into one model call. Groups never cross a checkpoint; the last group of a checkpoint can be smaller. Set `BATCH_SIZE` to 22 × K to match |
 | `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMBA_NUM_THREADS` | `2` | Thread caps for every process (workers and main). Use `2` on the A10 |
+| `WHISPER_LONGFORM` | `chunked` / `sequential` | How Whisper handles clips over 30 s (see [Done](#done)). Default `chunked` |
+| `SAMPLE_IDS` | `2094-142345-0008,1995-1836-0004` | Only run these sample ids (the stream is filtered before `NUMBER_OF_SAMPLES` is applied, so set that to the id count). Contains commas, so pass it with `EXTRA_DOCKER_ARGS="-e SAMPLE_IDS=..."`, not `PER_RUN_ENV` |
 | `SEED` | `42` | Base seed for the corruptions |
 | `RUN_POSTFIX` | `bs22_w4_r1` | Appended to the run label. Use a new one for every benchmark run |
 | `FORCE_RETRAIN` | `False` | `True` ignores a cached results file with the same label |
@@ -239,6 +244,15 @@ scp -i ~/.ssh/lambda_key /path/to/your/gcs-key.json ubuntu@<ip>:~/gcs-key.json
 ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 644 ~/gcs-key.json   # container user has a different UID
 ```
 
+Where the scripts expect each file on the instance (these are the defaults):
+
+| File | Path | Mode |
+|---|---|---|
+| GCS service-account key | `~/gcs-key.json` (`KEY_FILE`) | `644` |
+| Lambda API key | `~/lambda-api-key` (`LAMBDA_API_KEY_FILE`) | `600` |
+| `.env.docker` | `~/noisy-speech-asr-benchmarking-pipeline/.env.docker` (`ENV_FILE`) | |
+| HF model cache | `~/hf-cache` | `777` |
+
 Re-copy `.env.docker` whenever you change it on the Mac, for example after editing `HF_MODELS`. Pulling the repo doesn't update it.
 
 Create a host folder for the Hugging Face model cache, once per instance:
@@ -271,7 +285,7 @@ Example: smoke run of the current setup (one config, one repeat):
 ```bash
 tmux new -s sweep
 CONFIGS="SAMPLES_PER_CALL=1" \
-ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json SWEEP_ID=models7_smoke \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json SWEEP_ID=models7_smoke \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=models7_smoke_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=20,CHECKPOINT_SIZE=20,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
 REPEATS=1 ./run_sweep.sh
@@ -290,12 +304,30 @@ python3 analyze.py results/lambda_bench_runs/sweep_<id> --price-per-hour <A10 $/
 ```
 This writes `summary.csv`, `runs.csv`, `report.md` and `report.html` into the sweep folder. Copy the folder back with `scp -r`, then **terminate the instance**.
 
+A crashed run and its resume are two sweep folders. Don't put them in one folder: `analyze.py` averages runs of the same config, but wall time and cost must be added. Use `--combine` instead:
+```bash
+python3 analyze.py --combine results/lambda_bench_runs/fullrun2000 results/lambda_bench_runs/fullrun2000_resume \
+  --price-per-hour 1.29 --out fullrun2000_combined.csv
+```
+It writes one row per attempt and a TOTAL row: wall, fixed, inferences, audio seconds and cost are added, and the rates are recomputed from the sums. Failed attempts count (their GPU time was paid for). `duplicated_inferences` counts work redone after the resume.
+
 What the report shows per config: steady-state inferences/s, audio seconds per second and RTF, the GPU share of per-sample time, per-sample and per-inference latency percentiles, GPU utilisation, VRAM peak, power, container CPU, and (with a price) cost per audio hour and a projection for the target run. The run table splits wall time into fixed (model load and finalize), prep (worker CPU time), wait, fetch, inference, score and overhead.
 
 How to read a worker sweep: `wait_s` should drop as workers increase until it reaches about 0. The smallest worker count that gets there is the one to use. Ignore the "× M1" column: its baseline mixes two model sizes.
 
 ### 6. Unattended runs: progress, upload, terminate
-`run_and_terminate.sh` wraps `run_sweep.sh` for long runs: sweep → `analyze.py` → upload the sweep folder to `gs://<bucket>/lambda_bench_runs/<SWEEP_ID>/` → verify every file → terminate the instance. Shutting down from inside the instance (`sudo shutdown`) does **not** stop Lambda billing; only terminating does.
+`run_and_terminate.sh` wraps `run_sweep.sh` for long runs:
+1. Main sweep, then a check that every run exited 0 and logged `RUN COMPLETED SUCCESSFULLY`.
+2. Long-clip side run (only if the main sweep succeeded): `find_long_ids.py` reads the results pickle named in `container.log` and lists every sample with a clip over `LONGFORM_MIN_S` (default 30). Those samples are rerun on the Whisper models from `HF_MODELS` (or `LONGFORM_MODELS`) with `WHISPER_LONGFORM=sequential`, into the sweep `<SWEEP_ID>_longform`.
+3. `analyze.py` on both sweeps.
+4. Upload both to `gs://<bucket>/lambda_bench_runs/` and verify every file. A snapshot of the pipeline log is uploaded as `<SWEEP_ID>/pipeline.log`.
+5. Terminate, only if the main sweep succeeded and its upload verified. A failed side run is reported but does not block termination.
+
+Shutting down from inside the instance (`sudo shutdown`) does **not** stop Lambda billing; only terminating does.
+
+Extra variables (on top of `run_sweep.sh`'s): `TERMINATE` (1/0), `TERMINATE_DELAY` (default 120 s), `TERMINATE_ON_FAILURE` (default 0; 1 terminates even after a failed main sweep, to cap cost), `LONGFORM_RUN` (default 1; 0 skips the side run), `LONGFORM_MIN_S`, `LONGFORM_MODELS`, `NTFY_TOPIC`, `PRICE_PER_HOUR`, `TARGET_INFERENCES`, `GCS_PREFIX`.
+
+**Notifications:** install the ntfy app (iOS/Android), subscribe to a hard-to-guess topic name, and put `NTFY_TOPIC=<topic>` in `.env.docker` (or set it in the shell). Alerts: started, main run failed, side run failed, upload failed, script exited unexpectedly, done. No account is needed, but anyone who knows the topic can read it, so keep the name private.
 
 One-time setup per instance:
 1. Create an API key in the Lambda Cloud console (API keys page). Copy it to the instance:
@@ -313,18 +345,35 @@ Before starting, `docker ps` must list nothing: a leftover container shares the 
 Test run (no terminate, a few minutes):
 ```bash
 SWEEP_ID=automation_test TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
-ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=automation_test_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=10,CHECKPOINT_SIZE=5,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
 REPEATS=1 ./run_and_terminate.sh
 ```
 It should end with `VERIFIED N files in gs://.../lambda_bench_runs/automation_test/`.
 
+Smoke test after building a new image (no terminate, a few minutes). It runs one short and one long clip on all 7 models, then the side run on the long one:
+```bash
+SWEEP_ID=smoke_longclip TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
+EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface -e SAMPLE_IDS=2094-142345-0007,2094-142345-0008" \
+PER_RUN_ENV="RUN_POSTFIX=smoke_longclip_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2,CHECKPOINT_SIZE=2,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+REPEATS=1 ./run_and_terminate.sh
+```
+Main run: 2 × 22 × 7 = 308 inferences. Side run: 1 × 22 × 6 = 132. Check:
+1. `results/lambda_bench_runs/smoke_longclip/*/container.log` ends with `RUN COMPLETED SUCCESSFULLY` and has no "more than 3000 mel input features" error (chunking works on CUDA).
+2. The pipeline log shows `Main sweep succeeded`, then `Side run smoke_longclip_longform: 1 samples` with the 6 Whisper models.
+3. In `smoke_longclip_longform/*/container.log`, `run_label` ends with `smoke_longclip_longform`. That proves the side run's `-e` overrides (they come after `PER_RUN_ENV`, and Docker keeps the last value) took effect.
+4. The log ends with `Done (TERMINATE=0). main=ok side=1`, and both folders say `VERIFIED`.
+5. The ntfy app got "started" and "done".
+
+Optional guard test: rerun with `-e HF_MODELS=bad/model` added to `EXTRA_DOCKER_ARGS` (and a new `SWEEP_ID`). Expect a "MAIN RUN FAILED" alert, no side run, and `Main sweep failed: instance left running`.
+
 Full run (2000 samples × 22 corruptions × 7 models = 308,000 inferences, about 3.6 h):
 ```bash
 tmux new -s run
 SWEEP_ID=fullrun2000 CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=308000 \
-ENV_FILE=$PWD/.env.docker KEY_FILE=$PWD/gcs-key.json \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=fullrun2000_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
 REPEATS=1 ./run_and_terminate.sh
@@ -334,7 +383,7 @@ REPEATS=1 ./run_and_terminate.sh
 3. `Ctrl-b d` to detach, then close SSH. `tmux attach -t run` to come back.
 4. When the ETA has passed, check the Lambda console. If the instance is still there, terminate it by hand and read `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`.
 
-If the run is interrupted before the upload, rerun the same command: the run label is the same, so the app resumes from the last checkpoint.
+**Resuming after a crash:** keep `RUN_POSTFIX` exactly the same (it is part of the run label, which picks the checkpoints to resume from) but use a new `SWEEP_ID`, e.g. `fullrun2000_resume`. `SWEEP_ID` only names the log folder, and reusing it would overwrite the crashed attempt's logs in GCS. `container.log` should say `Resuming pipeline from checkpoint N`. The checkpoint that was running at the crash was never saved, so it is redone. Combine both attempts' timing with `analyze.py --combine`.
 
 Manual terminate from inside an instance (what the script does):
 ```bash
@@ -344,9 +393,9 @@ curl -fsS -u "$API_KEY:" -H "Content-Type: application/json" \
   https://cloud.lambdalabs.com/api/v1/instance-operations/terminate
 ```
 - The API key and instance ID are checked **before** the sweep starts, so a setup mistake fails in seconds, not after hours.
-- The instance is terminated only if the upload is verified (every file present with the same size). If verification fails, it stays up so nothing is lost.
+- The instance is terminated only if the main sweep succeeded and the upload is verified (every file present with the same size). Otherwise it stays up so nothing is lost (unless `TERMINATE_ON_FAILURE=1`).
 - Before terminating it waits `TERMINATE_DELAY` seconds (default 120); Ctrl-C in the tmux pane cancels. `TERMINATE=0` uploads without terminating.
-- The wrapper's own log is `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`, next to the sweep folder. It stays on the instance and is not uploaded.
+- The wrapper's own log is `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`, next to the sweep folder. A snapshot taken just before the upload goes to GCS as `<SWEEP_ID>/pipeline.log`; the upload and terminate lines after it stay on the instance.
 - The upload runs in the benchmark image (`upload_results.py` is mounted in), so nothing extra is installed on the host.
 
 Progress, in a second tmux pane (`Ctrl-b c`):
@@ -365,7 +414,7 @@ Local: `results/transcribe_cache/`. GCS: the same relative keys in the bucket.
 - `transcribe_cache/{run_label}.pkl`: the final results, a list of row dicts.
 - `transcribe_cache/checkpoint/{run_label}_CP_{nnnn}.pkl`: per-checkpoint results. They are deleted once the final file is written (`clear_cache=True`).
 
-Row fields: `idx` (sample id), `model`, `corr_type`, `wer`, `w_hits/subs/dels/ins`, `num_words`, `cer`, `c_hits/subs/dels/ins`, `num_chars`, `sample_analysis` (metrics + ASR flags), `ref`, `hyp`. `ref` and `hyp` are stored after normalization.
+Row fields: `idx` (sample id), `model`, `corr_type`, `wer`, `w_hits/subs/dels/ins`, `num_words`, `cer`, `c_hits/subs/dels/ins`, `num_chars`, `sample_analysis` (metrics + ASR flags), `ref`, `hyp`, `duration_s` (length of that corrupted clip; missing in rows written before it was added, which were all 30 s or shorter). `ref` and `hyp` are stored after normalization.
 
 ### Timing records
 Every line starting with `[TIMING] ` is a flushed JSON object with an ISO `ts`:
@@ -393,6 +442,8 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **Local checkpoint listing** used to return every `.pkl` in the checkpoint folder, so a local run could resume from or merge another run's checkpoints. It now matches the run's own prefix (`storage.py`). GCS was never affected.
 - **`docker builder prune`** wipes all build cache. Use `docker rmi <tag>` instead.
 - **Torch version:** must be ≥ 2.6 from the `cu126` index (transformers needs `torch.accelerator`).
+- **Clips over 30 s crash Whisper in short-form mode** ("more than 3000 mel input features"). The default `WHISPER_LONGFORM=chunked` handles them. MLX (`mlx-whisper`) does long-form by itself, so it never shows this error; test it with `INFERENCE_BACKEND=hf`.
+- **A failed run used to terminate the instance.** `run_sweep.sh` always exits 0 and only records the exit code in `run.json`, so the old wrapper uploaded the partial folder, verified it and terminated. The wrapper now checks each run's exit code and success line first.
 - **Spawn workers** re-import the main module. Heavy imports in `app.py` stay inside `if __name__ == "__main__":` so workers start light.
 - **Corruption lambdas** can't be pickled, so each worker builds its own corruption list in `init_worker`. The IR is loaded once in the main process and passed in through `initargs`.
 - **torchcodec's lazy `AudioDecoder`** can't be pickled, so samples are decoded in the main process (`_sample_decoder`) before going to the pool.

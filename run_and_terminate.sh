@@ -16,7 +16,8 @@
 #                        > LONGFORM_MIN_S seconds with WHISPER_LONGFORM=sequential; 0 to skip
 #   LONGFORM_MIN_S       duration threshold for the side run (default 30)
 #   LONGFORM_MODELS      models for the side run (default: the Whisper models in HF_MODELS)
-#   NTFY_TOPIC           optional; push notifications to https://ntfy.sh/<topic> (keep it private)
+#   NTFY_TOPIC           optional; push notifications to https://ntfy.sh/<topic> (keep it private).
+#                        Read from ENV_FILE if not set in the shell.
 #
 # The instance is terminated only if the main sweep succeeded and the upload is
 # verified. A failed side run is uploaded and reported but does not block termination.
@@ -37,6 +38,8 @@ GCS_PREFIX="${GCS_PREFIX:-lambda_bench_runs}"
 LONGFORM_RUN="${LONGFORM_RUN:-1}"
 LONGFORM_MIN_S="${LONGFORM_MIN_S:-30}"
 NTFY_TOPIC="${NTFY_TOPIC:-}"
+# Fall back to NTFY_TOPIC in the env file
+[[ -n "$NTFY_TOPIC" ]] || NTFY_TOPIC=$(grep -E '^NTFY_TOPIC=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' || true)
 export IMAGE ENV_FILE KEY_FILE OUT_ROOT SWEEP_ID
 
 SWEEP_DIR="$OUT_ROOT/$SWEEP_ID"

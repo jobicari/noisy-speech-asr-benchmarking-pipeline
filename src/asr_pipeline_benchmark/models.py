@@ -65,14 +65,19 @@ def load_hf_transcriber(model_id):
         whisper_config.task = "transcribe"
         whisper_config.language = "en"
 
+        # Clips over 30 s: chunk them, or let Whisper decode them sequentially with timestamps
+        chunked = config.WHISPER_LONGFORM == "chunked"
         asr_pipe = pipeline(
             "automatic-speech-recognition",
             model=model_id,
             tokenizer=tokenizer,
             dtype=dtype,
-            device=device
+            device=device,
+            chunk_length_s=30 if chunked else None,
         )
         call_kwargs = {"generation_config": whisper_config}
+        if not chunked:
+            call_kwargs["return_timestamps"] = True
     else:
         asr_pipe = pipeline(
             "automatic-speech-recognition",
@@ -196,7 +201,10 @@ def run_inference(transcribers, prepped_batch, n_samples=10):   # no noise
             # Start time for the GPU bound inference processes
             timer_infer_start = time.perf_counter()
 
+            # TRANSCRIPTION EXECUTION
             transcriptions = transcriber(all_audio, batch_size=config.BATCH_SIZE)
+
+            # Store model name for logs
             model_name = transcriber.model_name.replace("/", "_")
 
             timer_infer_stop = time.perf_counter()
@@ -282,7 +290,9 @@ def _score(text, ref, meta, model_name):
             "num_chars": c_hits + c_subs + c_dels,
             "sample_analysis": meta["sample_analysis"],
             "ref": ref,
-            "hyp": hyp}
+            "hyp": hyp,
+            "duration_s": meta["duration_s"]
+            }
 
 
 

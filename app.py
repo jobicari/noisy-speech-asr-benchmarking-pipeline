@@ -6,6 +6,7 @@ config = Config()
 
 
 if __name__ == "__main__":
+    # Imports here won't be loaded in the worker processes
     from asr_pipeline_benchmark.utility import generate_run_label, print_timing
     from asr_pipeline_benchmark.models import load_transcriber_engine, run_checkpoint_loop
     from asr_pipeline_benchmark.storage import LocalStorage, GCSStorage
@@ -14,6 +15,14 @@ if __name__ == "__main__":
     from asr_pipeline_benchmark.prep import init_worker
 
     dataset = get_speech_dataset()
+
+    # ----------------------------------------------------------------------------------------
+    # Filter dataset by sample ids if necessary - Used for testing
+    import os
+    ids = [i.strip() for i in os.getenv("SAMPLE_IDS", "").split(",") if i.strip()]
+    if ids:
+        dataset = dataset.filter(lambda sample: sample["id"] in ids)
+    # ----------------------------------------------------------------------------------------
     mit_ir, _ = extract_ir_from_mit_dataset(ir_idx=251)
 
     # ----------------------------------------------------------------------------------------

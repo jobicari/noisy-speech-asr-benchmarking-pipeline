@@ -140,6 +140,12 @@ class Config:
     SAMPLES_PER_CALL: int = field(
         default_factory=lambda: int(os.getenv("SAMPLES_PER_CALL", 1))
     )
+    # How Whisper handles clips longer than 30 s:
+    # 'chunked'    = overlapping 30 s chunks decoded in parallel, then stitched (clips <= 30 s unchanged)
+    # 'sequential' = OpenAI long-form decoding with timestamps (also changes decoding of short clips)
+    WHISPER_LONGFORM: str = field(
+        default_factory=lambda: os.getenv("WHISPER_LONGFORM", "chunked")
+    )
 
 
     def __post_init__(self):
@@ -170,6 +176,10 @@ class Config:
 
         if self.SAMPLES_PER_CALL < 1:
             raise ValueError(f"SAMPLES_PER_CALL must be >= 1. Got {self.SAMPLES_PER_CALL}")
+
+        self.WHISPER_LONGFORM = self.WHISPER_LONGFORM.lower().strip()
+        if self.WHISPER_LONGFORM not in ["chunked", "sequential"]:
+            raise ValueError(f"WHISPER_LONGFORM must be either 'chunked' or 'sequential'. Got {self.WHISPER_LONGFORM}")
 
 
     @property

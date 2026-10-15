@@ -7,6 +7,11 @@ Stdlib only, so it runs on the Lambda host or a laptop without installs.
         --target-inferences 44000
 
 Writes summary.csv, report.md and report.html into the sweep directory.
+
+To add up a crashed run and its resume (totals, not averages):
+
+    python3 analyze.py --combine results/.../fullrun2000 results/.../fullrun2000_resume \
+        --price-per-hour 1.29 --out fullrun2000_combined.csv
 """
 import argparse
 import csv
@@ -327,14 +332,78 @@ figure{margin:0}figcaption{font-weight:600;margin-bottom:4px}svg{width:100%;heig
                     f"<title>ASR sweep report</title><style>{css}</style>" + "\n".join(body))
 
 
+def combine(dirs, price, out):
+    """Totals across the attempts of one run (e.g. a crashed run and its resume).
+
+    Times, costs and counts are added, then the rates are recomputed from the sums.
+    Failed attempts count too: their GPU time was paid for. Work redone after a
+    resume is counted as many times as it ran and reported as duplicated_inferences.
+    """
+    rows, seen, dup = [], set(), 0
+    for d in dirs:
+        for run_dir in sorted(d.iterdir()):
+            if not (run_dir / "run.json").exists():
+                continue
+            r = analyse_run(run_dir, price)
+            r["attempt"] = f"{d.name}/{r['run_id']}"
+            rows.append(r)
+            for t in read_jsonl(run_dir / "timing.jsonl"):
+                if t.get("event") == "sample":
+                    key = (t.get("sample_idx"), t.get("model"))
+                    if key in seen:
+                        dup += t.get("n_items", 0)
+                    seen.add(key)
+    if not rows:
+        raise SystemExit(f"no runs under {', '.join(map(str, dirs))}")
+
+    def total(f):
+        return sum(r.get(f) or 0 for r in rows)
+
+    wall, fixed, n, audio = total("wall_s"), total("fixed_s"), total("n_inferences"), total("audio_s")
+    steady = wall - fixed
+    c = {"attempt": "TOTAL", "exit_code": max(r["exit_code"] for r in rows),
+         "wall_s": wall, "fixed_s": fixed, "n_inferences": n, "audio_s": audio,
+         "infer_s": total("infer_s"), "duplicated_inferences": dup,
+         "inf_per_s": n / wall if wall else None,
+         "steady_inf_per_s": n / steady if steady > 0 else None,
+         "rtf": steady / audio if audio else None,
+         # GPU utilisation weighted by each attempt's wall time
+         "gpu_util_mean": (sum((r["gpu_util_mean"] or 0) * r["wall_s"] for r in rows) / wall) if wall else None}
+    if price:
+        c["run_cost_usd"] = price * wall / 3600
+        c["usd_per_1k_inf"] = price * steady / n * 1000 if n else None
+        c["usd_per_1k_inf_all_in"] = price * wall / n * 1000 if n else None
+
+    fields = list(c.keys())
+    with out.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows + [c])
+    for r in rows + [c]:
+        print(f"{r['attempt']:<45} exit={r['exit_code']} wall={fmt(r['wall_s'], 0)}s "
+              f"inferences={fmt(r['n_inferences'], 0)} inf/s(steady)={fmt(r.get('steady_inf_per_s'))} "
+              f"cost=${fmt(r.get('run_cost_usd'))}")
+    print(f"duplicated inferences (redone after resume): {dup}")
+    print(f"Wrote {out}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("sweep_dir", type=Path)
+    ap.add_argument("sweep_dir", type=Path, nargs="?")
+    ap.add_argument("--combine", type=Path, nargs="+", metavar="SWEEP_DIR",
+                    help="add up the attempts of one run (e.g. a crashed run and its resume) "
+                         "instead of averaging them; writes --out")
+    ap.add_argument("--out", type=Path, default=Path("combined.csv"),
+                    help="output CSV for --combine (default ./combined.csv)")
     ap.add_argument("--price-per-hour", type=float, default=0.0,
                     help="instance $/hour (check Lambda's current A10 price)")
     ap.add_argument("--target-inferences", type=int, default=44000,
                     help="size of the big run, in transcriptions (default: 1000 samples x 22 x 2 models)")
     args = ap.parse_args()
+    if args.combine:
+        return combine(args.combine, args.price_per_hour, args.out)
+    if not args.sweep_dir:
+        ap.error("give a sweep_dir, or --combine DIR [DIR ...]")
 
     sweep_path = args.sweep_dir / "sweep.json"
     sweep = json.loads(sweep_path.read_text()) if sweep_path.exists() else {}

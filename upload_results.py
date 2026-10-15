@@ -22,6 +22,13 @@ def main():
     files = sorted(p for p in local_dir.rglob("*") if p.is_file())
     if not files:
         sys.exit(f"Nothing to upload in {local_dir}")
+    # Guard against uploading the wrong folder (e.g. an empty path variable mounting the repo)
+    if not any(p.name == "run.json" for p in files):
+        sys.exit(f"Refusing to upload {local_dir}: no run.json, so it is not a sweep folder")
+    secret = [p for p in files if p.name.startswith(".env") or p.name.endswith("key.json")
+              or ".git" in p.relative_to(local_dir).parts]
+    if secret:
+        sys.exit(f"Refusing to upload {local_dir}: it contains {secret[0].relative_to(local_dir)}")
 
     bucket = storage.Client().bucket(bucket_name)
     expected = {}

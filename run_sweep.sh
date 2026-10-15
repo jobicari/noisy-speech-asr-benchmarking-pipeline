@@ -63,21 +63,32 @@ for cfg in $CONFIGS; do
     cname="asrbench_${run_id}_$$"
     t0=$(date +%s.%N)
     set +e
-    $DOCKER run --name "$cname" --gpus all --env-file "$ENV_FILE" \
-      -v "$KEY_FILE:/secrets/key.json:ro" "${env_args[@]}" $EXTRA_DOCKER_ARGS \
-      "$IMAGE" > "$run_dir/container.log" 2>&1 &
-    run_pid=$!
-    # Container CPU/mem sampler (docker stats is ~1-2 s per sample).
-    ( sleep 2
-      while kill -0 "$run_pid" 2>/dev/null; do
-        $DOCKER stats --no-stream --format '{{.CPUPerc}},{{.MemUsage}}' "$cname" 2>/dev/null \
-          | sed "s/^/$(date +%s.%N),/" >> "$run_dir/cpu.csv"
-      done ) &
-    cpu_pid=$!
-    wait "$run_pid"; rc=$?
+    # Detached (-d), so the container and its exit code don't depend on this
+    # script's docker client; `docker wait` collects the exit code at the end.
+    if $DOCKER run -d --name "$cname" --gpus all --env-file "$ENV_FILE" \
+         -v "$KEY_FILE:/secrets/key.json:ro" "${env_args[@]}" $EXTRA_DOCKER_ARGS \
+         "$IMAGE" > /dev/null 2> "$run_dir/container.log"; then
+      $DOCKER logs -f "$cname" > "$run_dir/container.log" 2>&1 &
+      logs_pid=$!
+      $DOCKER wait "$cname" > "$run_dir/.exit_code" 2>/dev/null &
+      wait_pid=$!
+      # Container CPU/mem sampler (docker stats is ~1-2 s per sample).
+      ( sleep 2
+        while kill -0 "$wait_pid" 2>/dev/null; do
+          $DOCKER stats --no-stream --format '{{.CPUPerc}},{{.MemUsage}}' "$cname" 2>/dev/null \
+            | sed "s/^/$(date +%s.%N),/" >> "$run_dir/cpu.csv"
+        done ) &
+      cpu_pid=$!
+      wait "$wait_pid"
+      rc=$(tr -d '[:space:]' < "$run_dir/.exit_code"); rc=${rc:-1}; rm -f "$run_dir/.exit_code"
+      wait "$logs_pid" 2>/dev/null   # docker logs -f ends when the container stops
+    else
+      rc=$?   # docker run itself failed (e.g. 125: bad env file); reason is in container.log
+      cpu_pid=
+    fi
     t1=$(date +%s.%N)
     set -e
-    kill "$gpu_pid" "$cpu_pid" 2>/dev/null || true; wait 2>/dev/null || true
+    kill "$gpu_pid" ${cpu_pid:+"$cpu_pid"} 2>/dev/null || true; wait 2>/dev/null || true
     $DOCKER rm "$cname" >/dev/null 2>&1 || true
 
     # Pull structured timing lines (see TIMING_SPEC.md) out of the log.

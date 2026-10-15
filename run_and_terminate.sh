@@ -7,7 +7,7 @@
 #   LAMBDA_API_KEY_FILE  file holding a Lambda Cloud API key (default ~/lambda-api-key, chmod 600)
 #   LAMBDA_INSTANCE_ID   optional; found automatically from this machine's public IP
 #   TERMINATE            1 (default) terminate at the end, 0 to only upload
-#   TERMINATE_DELAY      seconds to wait before terminating, so you can Ctrl-C (default 120)
+#   TERMINATE_DELAY      seconds to wait before terminating, so you can cancel (default 120)
 #   TERMINATE_ON_FAILURE 0 (default) keep the instance up if the main sweep failed, 1 terminate anyway
 #   PRICE_PER_HOUR       for analyze.py (default 1.29)
 #   TARGET_INFERENCES    for analyze.py (default: unset, analyze.py's own default)
@@ -18,6 +18,8 @@
 #   LONGFORM_MODELS      models for the side run (default: the Whisper models in HF_MODELS)
 #   NTFY_TOPIC           optional; push notifications to https://ntfy.sh/<topic> (keep it private).
 #                        Read from ENV_FILE if not set in the shell.
+#   DETACH               1 (default) re-run in the background, detached from the terminal, so a
+#                        dropped SSH session can't kill it; 0 to stay in the foreground
 #
 # The instance is terminated only if the main sweep succeeded and the upload is
 # verified. A failed side run is uploaded and reported but does not block termination.
@@ -47,6 +49,15 @@ SIDE_ID="${SWEEP_ID}_longform"
 SIDE_DIR="$OUT_ROOT/$SIDE_ID"
 PIPELINE_LOG="$OUT_ROOT/$SWEEP_ID.pipeline.log"
 mkdir -p "$SWEEP_DIR"
+
+# A closed SSH session sends SIGHUP to everything started from it. Re-run in a new
+# session (setsid) with no terminal, so the run survives it even outside tmux.
+if [[ "${DETACH:-1}" == "1" && -z "${_RT_DETACHED:-}" ]]; then
+  _RT_DETACHED=1 setsid nohup "$0" "$@" >/dev/null 2>&1 </dev/null &
+  echo "Running detached (pid $!). Follow:  tail -f $PIPELINE_LOG"
+  echo "Stop:  pkill -f run_and_terminate.sh  (a running container keeps going: docker stop it)"
+  exit 0
+fi
 # Log next to (not inside) the sweep folder, so the upload never sees a file that is still growing
 exec > >(tee -a "$PIPELINE_LOG") 2>&1
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
@@ -181,7 +192,7 @@ if [[ $main_ok != 1 && "$TERMINATE_ON_FAILURE" != "1" ]]; then
   log "Main sweep failed: instance left running. Inspect, then terminate it by hand."
   NOTIFIED_EXIT=1; exit 1
 fi
-log "Terminating $LAMBDA_INSTANCE_ID in ${TERMINATE_DELAY}s. Ctrl-C to cancel. $summary"
+log "Terminating $LAMBDA_INSTANCE_ID in ${TERMINATE_DELAY}s. Cancel: kill $$ (or Ctrl-C if DETACH=0). $summary"
 notify "done, terminating" "$summary. Terminating $LAMBDA_INSTANCE_ID in ${TERMINATE_DELAY}s."
 sleep "$TERMINATE_DELAY"
 curl -fsS -u "$API_KEY:" -H "Content-Type: application/json" \

@@ -342,6 +342,8 @@ Tested end to end: the ID lookup and terminate call were run on a throwaway inst
 
 Before starting, `docker ps` must list nothing: a leftover container shares the GPU and slows the run.
 
+**It survives a dropped SSH connection.** The script re-runs itself detached from the terminal (`setsid nohup`) and returns at once, printing its pid and the log to follow (`tail -f results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`). Stop it with `pkill -f run_and_terminate.sh`; a container that is already running keeps going until you `docker stop` it. `DETACH=0` keeps it in the foreground (then use tmux). Each container is started with `docker run -d` and collected with `docker wait`, so its exit code is recorded even if the script's docker client goes away. The first `fullrun2000_resume` lost its wrapper this way: it ran in a plain SSH shell, the connection dropped after 2 h, and the container finished with nothing left to upload or terminate.
+
 Test run (no terminate, a few minutes):
 ```bash
 SWEEP_ID=automation_test TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
@@ -371,16 +373,15 @@ Optional guard test: rerun with `-e HF_MODELS=bad/model` added to `EXTRA_DOCKER_
 
 Full run (2000 samples × 22 corruptions × 7 models = 308,000 inferences, about 3.6 h):
 ```bash
-tmux new -s run
 SWEEP_ID=fullrun2000 CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=308000 \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=fullrun2000_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
 REPEATS=1 ./run_and_terminate.sh
 ```
-1. The first lines must say `Will terminate instance <id>`.
-2. `Ctrl-b c`, then `watch -n 30 ./progress.sh`, and check that samples count up.
-3. `Ctrl-b d` to detach, then close SSH. `tmux attach -t run` to come back.
+1. It returns at once with `Running detached (pid N)`. `tail -f results/lambda_bench_runs/fullrun2000.pipeline.log` must show `Will terminate instance <id>`.
+2. `watch -n 30 ./progress.sh` (in tmux if you like) and check that samples count up.
+3. Close SSH whenever you want; the run doesn't depend on it.
 4. When the ETA has passed, check the Lambda console. If the instance is still there, terminate it by hand and read `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`.
 
 **Resuming after a crash:** keep `RUN_POSTFIX` exactly the same (it is part of the run label, which picks the checkpoints to resume from) but use a new `SWEEP_ID`, e.g. `fullrun2000_resume`. `SWEEP_ID` only names the log folder, and reusing it would overwrite the crashed attempt's logs in GCS. `container.log` should say `Resuming pipeline from checkpoint N`. The checkpoint that was running at the crash was never saved, so it is redone. Combine both attempts' timing with `analyze.py --combine`.
@@ -394,7 +395,8 @@ curl -fsS -u "$API_KEY:" -H "Content-Type: application/json" \
 ```
 - The API key and instance ID are checked **before** the sweep starts, so a setup mistake fails in seconds, not after hours.
 - The instance is terminated only if the main sweep succeeded and the upload is verified (every file present with the same size). Otherwise it stays up so nothing is lost (unless `TERMINATE_ON_FAILURE=1`).
-- Before terminating it waits `TERMINATE_DELAY` seconds (default 120); Ctrl-C in the tmux pane cancels. `TERMINATE=0` uploads without terminating.
+- Before terminating it waits `TERMINATE_DELAY` seconds (default 120); `kill <pid>` (the pid is in the "Terminating" log line) cancels. `TERMINATE=0` uploads without terminating.
+- `upload_results.py` refuses a folder without a `run.json` (not a sweep folder) or with `.env*`, `*key.json` or `.git` in it, so a wrong or empty path can't upload the repo and its secrets.
 - The wrapper's own log is `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`, next to the sweep folder. A snapshot taken just before the upload goes to GCS as `<SWEEP_ID>/pipeline.log`; the upload and terminate lines after it stay on the instance.
 - The upload runs in the benchmark image (`upload_results.py` is mounted in), so nothing extra is installed on the host.
 

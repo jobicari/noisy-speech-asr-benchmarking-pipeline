@@ -78,6 +78,17 @@ def load_hf_transcriber(model_id):
         call_kwargs = {"generation_config": whisper_config}
         if not chunked:
             call_kwargs["return_timestamps"] = True
+        if config.WHISPER_FALLBACK:
+            # Fallback samples at temperature > 0: seed it so a rerun gives the same text
+            from transformers import set_seed
+            set_seed(config.SEED)
+            # OpenAI transcribe() defaults. 1.35 is the token-space equivalent of its
+            # 2.4 text compression ratio.
+            call_kwargs.update(
+                temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                compression_ratio_threshold=1.35,
+                logprob_threshold=-1.0,
+            )
     else:
         asr_pipe = pipeline(
             "automatic-speech-recognition",
@@ -376,8 +387,17 @@ def run_checkpoint_loop(
                 print(f"Resuming pipeline from checkpoint {checkpoint_idx:04d} (sample {sample_counter})...")
 
                 # fast-forward the lazy iterator
+                timer_resume_start = time.perf_counter()
                 for _ in range(sample_counter):
                     next(limited_iterator, None)
+                record = {
+                    "event": "phase",
+                    "name": "resume_skip",
+                    "checkpoint_idx": checkpoint_idx,
+                    "samples_skipped": sample_counter,
+                    "seconds": time.perf_counter() - timer_resume_start
+                }
+                print_timing(record)
 
             else:
                 print("Non-contiguous checkpoints found; ignoring resume to keep sampling deterministic.")

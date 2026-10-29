@@ -7,19 +7,22 @@ config = Config()
 
 if __name__ == "__main__":
     # Imports here won't be loaded in the worker processes
-    from asr_pipeline_benchmark.utility import generate_run_label, print_timing
+    from asr_pipeline_benchmark.utility import generate_run_label, print_timing, run_config_record
     from asr_pipeline_benchmark.models import load_transcriber_engine, run_checkpoint_loop
     from asr_pipeline_benchmark.storage import LocalStorage, GCSStorage
     from asr_pipeline_benchmark.data import get_speech_dataset
     from asr_pipeline_benchmark.preprocessing import extract_ir_from_mit_dataset
     from asr_pipeline_benchmark.prep import init_worker
 
+    timer_startup_start = time.perf_counter()
     dataset = get_speech_dataset()
 
     # ----------------------------------------------------------------------------------------
     # Filter dataset by sample ids if necessary - Used for testing
     import os
     ids = [i.strip() for i in os.getenv("SAMPLE_IDS", "").split(",") if i.strip()]
+    # CLIPS picks single corruptions of a sample, so it also limits the samples
+    ids = list(config.CLIPS) or ids
     if ids:
         dataset = dataset.filter(lambda sample: sample["id"] in ids)
     # ----------------------------------------------------------------------------------------
@@ -37,7 +40,14 @@ if __name__ == "__main__":
     # SPAWN POOL OF WORKERS
     # ----------------------------------------------------------------------------------------
     ctx = mp.get_context('spawn')
-    with ctx.Pool(config.N_PREP_WORKERS, initializer=init_worker, initargs=(config.TEST_TYPE, mit_ir)) as pool:
+    with ctx.Pool(config.N_PREP_WORKERS, initializer=init_worker, initargs=(config.TEST_TYPE, mit_ir, config.CLIPS)) as pool:
+        # Dataset, IR, storage and pool start, before any model loads
+        print_timing({
+            "event": "phase",
+            "name": "startup",
+            "seconds": time.perf_counter() - timer_startup_start
+        })
+
         # ----------------------------------------------------------------------------------------
         # LOAD TRANSCRIBER ENGINE
         # ----------------------------------------------------------------------------------------
@@ -58,6 +68,9 @@ if __name__ == "__main__":
             print_timing(record)
 
             transcribers.append(transcriber)
+
+        # After the loads, so the HF backend has CUDA up and the GPU name is known
+        print_timing(run_config_record(config))
 
         # ----------------------------------------------------------------------------------------
         # CONFIGURATION

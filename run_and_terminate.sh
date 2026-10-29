@@ -16,8 +16,14 @@
 #                        > LONGFORM_MIN_S seconds with WHISPER_LONGFORM=sequential; 0 to skip
 #   LONGFORM_MIN_S       duration threshold for the side run (default 30)
 #   LONGFORM_MODELS      models for the side run (default: the Whisper models in HF_MODELS)
+#   LOOP_RUN             1 (default) after the main sweep, rerun every clip where a Whisper model
+#                        looped (find_loop_clips.py) with WHISPER_FALLBACK=True; 0 to skip
+#   LOOP_MIN_RATIO       compression ratio above which a transcript counts as a loop (default 2.4)
+#   LOOP_MODELS          models for the loop side run (default: the Whisper models in HF_MODELS)
 #   NTFY_TOPIC           optional; push notifications to https://ntfy.sh/<topic> (keep it private).
 #                        Read from ENV_FILE if not set in the shell.
+#   STALL_MIN            with NTFY_TOPIC, alert when no run log has grown for this many minutes
+#                        (default 30; 0 turns it off). Alert only: the run is not stopped.
 #   DETACH               1 (default) re-run in the background, detached from the terminal, so a
 #                        dropped SSH session can't kill it; 0 to stay in the foreground
 #
@@ -39,6 +45,9 @@ PRICE_PER_HOUR="${PRICE_PER_HOUR:-1.29}"
 GCS_PREFIX="${GCS_PREFIX:-lambda_bench_runs}"
 LONGFORM_RUN="${LONGFORM_RUN:-1}"
 LONGFORM_MIN_S="${LONGFORM_MIN_S:-30}"
+STALL_MIN="${STALL_MIN:-30}"
+LOOP_RUN="${LOOP_RUN:-1}"
+LOOP_MIN_RATIO="${LOOP_MIN_RATIO:-2.4}"
 NTFY_TOPIC="${NTFY_TOPIC:-}"
 # Fall back to NTFY_TOPIC in the env file
 [[ -n "$NTFY_TOPIC" ]] || NTFY_TOPIC=$(grep -E '^NTFY_TOPIC=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' || true)
@@ -47,6 +56,8 @@ export IMAGE ENV_FILE KEY_FILE OUT_ROOT SWEEP_ID
 SWEEP_DIR="$OUT_ROOT/$SWEEP_ID"
 SIDE_ID="${SWEEP_ID}_longform"
 SIDE_DIR="$OUT_ROOT/$SIDE_ID"
+LOOP_ID="${SWEEP_ID}_loops"
+LOOP_DIR="$OUT_ROOT/$LOOP_ID"
 PIPELINE_LOG="$OUT_ROOT/$SWEEP_ID.pipeline.log"
 mkdir -p "$SWEEP_DIR"
 
@@ -70,7 +81,28 @@ notify() {
 }
 # Any unexpected exit (set -e, a failed command) also sends a notification
 NOTIFIED_EXIT=0   # set to 1 where an exit already sent its own notification
-trap 'rc=$?; [[ $rc -ne 0 && $NOTIFIED_EXIT == 0 ]] && notify "script exited ($rc)" "run_and_terminate.sh stopped with exit $rc. Instance left running. See $PIPELINE_LOG"' EXIT
+WATCH_PID=
+# Stop the stall watcher and its sleep, which would otherwise hold the log open for a minute
+trap 'rc=$?; [[ -n "$WATCH_PID" ]] && kill $(pgrep -P "$WATCH_PID") "$WATCH_PID" 2>/dev/null; [[ $rc -ne 0 && $NOTIFIED_EXIT == 0 ]] && notify "script exited ($rc)" "run_and_terminate.sh stopped with exit $rc. Instance left running. See $PIPELINE_LOG"' EXIT
+
+# Stall alert: a hung run (e.g. a killed prep worker blocks the pool forever) keeps
+# billing without failing. Alert once per stall when the newest container.log of this
+# sweep and its side runs has not grown for STALL_MIN minutes; alert again after it moves.
+watch_stall() {
+  local alerted="" log age
+  while sleep 60; do
+    log=$(ls -t "$OUT_ROOT/$SWEEP_ID"*/*/container.log 2>/dev/null | head -1 || true)
+    [[ -n "$log" ]] || continue
+    age=$(( $(date +%s) - $(stat -c %Y "$log") ))
+    if (( age < STALL_MIN * 60 )); then
+      alerted=""
+    elif [[ "$alerted" != "$log" ]]; then
+      log "No log output for $((age / 60)) min in $log"
+      notify "no progress for $((age / 60)) min" "Nothing new in $log for $((age / 60)) min. The run may be stuck; the instance is still billing."
+      alerted=$log
+    fi
+  done
+}
 
 DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 
@@ -98,8 +130,49 @@ upload() {
     --entrypoint python "$IMAGE" /app/upload_results.py /upload "$GCS_PREFIX/$dest"
 }
 
+# Copy each run's final results pickle (named in its container.log) into the sweep's
+# GCS folder, next to that run's logs
+copy_results() {
+  local dir=$1 dest=$2 run key rc=0
+  for run in "$dir"/*/; do
+    [[ -f "$run/container.log" ]] || continue
+    key=$(grep -A1 -E '(dumped|Loaded) test results (to|from) cache:' "$run/container.log" | tail -1 | tr -d '[:space:]' || true)
+    [[ -n "$key" ]] || { log "No results key in $run/container.log: nothing to copy"; rc=1; continue; }
+    $DOCKER run --rm --env-file "$ENV_FILE" \
+      -v "$KEY_FILE:/secrets/key.json:ro" \
+      -v "$PWD/copy_results.py:/app/copy_results.py:ro" \
+      --entrypoint python "$IMAGE" /app/copy_results.py "$key" "$GCS_PREFIX/$dest/$(basename "$run")" || rc=1
+  done
+  return $rc
+}
+
 analyze() {
   python3 analyze.py "$1" --price-per-hour "$PRICE_PER_HOUR" "${@:2}" || log "analyze.py failed on $1 (uploading anyway)"
+}
+
+# Run a finder script (find_long_ids.py, find_loop_clips.py) in the image on the results
+# pickle of every main run, and print the union of what they found, comma-separated
+# (its log lines go to stderr, so they don't end up in the result)
+find_in_main_results() {
+  local script=$1 out="" clog key found
+  shift
+  for clog in "$SWEEP_DIR"/*/container.log; do
+    key=$(grep -A1 -E '(dumped|Loaded) test results (to|from) cache:' "$clog" | tail -1 | tr -d '[:space:]' || true)
+    [[ -n "$key" ]] || { log "No results key in $clog" >&2; continue; }
+    found=$($DOCKER run --rm --env-file "$ENV_FILE" \
+      -v "$KEY_FILE:/secrets/key.json:ro" \
+      -v "$PWD/find_long_ids.py:/app/find_long_ids.py:ro" \
+      -v "$PWD/$script:/app/$script:ro" \
+      --entrypoint python "$IMAGE" "/app/$script" "$key" "$@") \
+      || { log "$script failed on $key" >&2; continue; }
+    out="${out:+$out,}$found"
+  done
+  tr ',' '\n' <<< "$out" | sed '/^$/d' | sort -u | paste -sd, -
+}
+
+# The Whisper models in HF_MODELS: wav2vec2 has no chunking and no decoding loop
+whisper_models() {
+  grep -E '^HF_MODELS=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'"'"' ' | tr ',' '\n' | { grep -i whisper || true; } | paste -sd, -
 }
 
 # ---- Check termination prerequisites BEFORE the long run ---------------------
@@ -120,6 +193,10 @@ else
   log "TERMINATE=0: will upload but not terminate"
 fi
 notify "started" "Sweep $SWEEP_ID started on $(hostname)"
+if [[ -n "$NTFY_TOPIC" && "$STALL_MIN" -gt 0 ]]; then
+  watch_stall &
+  WATCH_PID=$!
+fi
 
 # ---- 1. Main sweep -----------------------------------------------------------
 log "Starting sweep $SWEEP_ID"
@@ -140,22 +217,11 @@ analyze "$SWEEP_DIR" ${analyze_args[@]+"${analyze_args[@]}"}
 side_ok=-   # - = not run, 1 = ok, 0 = failed
 if [[ $main_ok == 1 && "$LONGFORM_RUN" == "1" ]]; then
   # Union of long ids over every main run (one results pickle per run)
-  long_ids=""
-  for clog in "$SWEEP_DIR"/*/container.log; do
-    key=$(grep -A1 -E '(dumped|Loaded) test results (to|from) cache:' "$clog" | tail -1 | tr -d '[:space:]' || true)
-    [[ -n "$key" ]] || { log "No results key in $clog"; continue; }
-    ids=$($DOCKER run --rm --env-file "$ENV_FILE" \
-      -v "$KEY_FILE:/secrets/key.json:ro" \
-      -v "$PWD/find_long_ids.py:/app/find_long_ids.py:ro" \
-      --entrypoint python "$IMAGE" /app/find_long_ids.py "$key" --min-duration "$LONGFORM_MIN_S") \
-      || { log "find_long_ids.py failed on $key"; continue; }
-    long_ids="${long_ids:+$long_ids,}$ids"
-  done
-  long_ids=$(tr ',' '\n' <<< "$long_ids" | sed '/^$/d' | sort -u | paste -sd, -)
+  long_ids=$(find_in_main_results find_long_ids.py --min-duration "$LONGFORM_MIN_S")
   n_long=$(tr ',' '\n' <<< "$long_ids" | sed '/^$/d' | wc -l | tr -d ' ')
 
   # Whisper models only: wav2vec2 is not chunked, so it has nothing to compare
-  models="${LONGFORM_MODELS:-$(grep -E '^HF_MODELS=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'"'"' ' | tr ',' '\n' | { grep -i whisper || true; } | paste -sd, -)}"
+  models="${LONGFORM_MODELS:-$(whisper_models)}"
 
   if [[ $n_long -eq 0 ]]; then
     log "No samples with a clip > ${LONGFORM_MIN_S}s: skipping the side run"
@@ -173,6 +239,31 @@ if [[ $main_ok == 1 && "$LONGFORM_RUN" == "1" ]]; then
   fi
 fi
 
+# ---- 2b. Looped-clip side run (Whisper, temperature fallback) ----------------
+# Same clips and decoding as the main run, plus OpenAI-style temperature fallback, so each
+# looped transcript can be compared with what the model gives when it is pushed out of the loop.
+loop_ok=-   # - = not run, 1 = ok, 0 = failed
+if [[ $main_ok == 1 && "$LOOP_RUN" == "1" ]]; then
+  clips=$(find_in_main_results find_loop_clips.py --min-ratio "$LOOP_MIN_RATIO")
+  n_clips=$(tr ',' '\n' <<< "$clips" | sed '/^$/d' | wc -l | tr -d ' ')
+  n_samples=$(tr ',' '\n' <<< "$clips" | sed '/^$/d' | cut -d'|' -f1 | sort -u | wc -l | tr -d ' ')
+  models="${LOOP_MODELS:-$(whisper_models)}"
+
+  if [[ $n_clips -eq 0 ]]; then
+    log "No looped transcripts: skipping the loop side run"
+  elif [[ -z "$models" ]]; then
+    log "No Whisper models found for the loop side run: skipping it"
+  else
+    log "Loop side run $LOOP_ID: $n_clips clips in $n_samples samples, models $models"
+    # Most samples have one looped clip, so batch clips across samples
+    SWEEP_ID="$LOOP_ID" CONFIGS="WHISPER_FALLBACK=True" REPEATS=1 N_INFERENCES= \
+    EXTRA_DOCKER_ARGS="${EXTRA_DOCKER_ARGS:-} -e CLIPS=$clips -e NUMBER_OF_SAMPLES=$n_samples -e HF_MODELS=$models -e RUN_POSTFIX=${LOOP_ID} -e SAMPLES_PER_CALL=20" \
+      ./run_sweep.sh || log "run_sweep.sh (loops) exited with $?"
+    if sweep_ok "$LOOP_DIR"; then loop_ok=1; else loop_ok=0; notify "loop side run failed" "Loop side run $LOOP_ID failed. Main results are fine."; fi
+    analyze "$LOOP_DIR"
+  fi
+fi
+
 # ---- 3. Upload + verify ------------------------------------------------------
 # Snapshot the pipeline log into the sweep folder so it is uploaded too
 cp "$PIPELINE_LOG" "$SWEEP_DIR/pipeline.log"
@@ -181,12 +272,22 @@ if ! upload "$SWEEP_DIR" "$SWEEP_ID"; then
   notify "UPLOAD FAILED" "Upload of $SWEEP_ID not verified. Instance left running."
   NOTIFIED_EXIT=1; exit 1
 fi
+if [[ $main_ok == 1 ]] && ! copy_results "$SWEEP_DIR" "$SWEEP_ID"; then
+  log "RESULTS COPY NOT VERIFIED. Instance left running so nothing is lost."
+  notify "RESULTS COPY FAILED" "Results of $SWEEP_ID not copied next to the logs. Instance left running."
+  NOTIFIED_EXIT=1; exit 1
+fi
 if [[ -d "$SIDE_DIR" ]]; then
-  upload "$SIDE_DIR" "$SIDE_ID" || { log "Side run upload not verified (main results are safe)"; side_ok=0; }
+  { upload "$SIDE_DIR" "$SIDE_ID" && { [[ $side_ok != 1 ]] || copy_results "$SIDE_DIR" "$SIDE_ID"; }; } \
+    || { log "Side run upload or results copy not verified (main results are safe)"; side_ok=0; }
+fi
+if [[ -d "$LOOP_DIR" ]]; then
+  { upload "$LOOP_DIR" "$LOOP_ID" && { [[ $loop_ok != 1 ]] || copy_results "$LOOP_DIR" "$LOOP_ID"; }; } \
+    || { log "Loop side run upload or results copy not verified (main results are safe)"; loop_ok=0; }
 fi
 
 # ---- 4. Terminate ------------------------------------------------------------
-summary="main=$([[ $main_ok == 1 ]] && echo ok || echo FAILED) side=$side_ok"
+summary="main=$([[ $main_ok == 1 ]] && echo ok || echo FAILED) side=$side_ok loops=$loop_ok"
 [[ "$TERMINATE" == "1" ]] || { log "Done (TERMINATE=0). $summary"; notify "done" "$summary. TERMINATE=0, instance still running."; exit 0; }
 if [[ $main_ok != 1 && "$TERMINATE_ON_FAILURE" != "1" ]]; then
   log "Main sweep failed: instance left running. Inspect, then terminate it by hand."

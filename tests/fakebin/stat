@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# GNU stat's -c %Y (mtime), which BSD stat on macOS lacks
+if [[ $1 == -c && $2 == %Y ]]; then
+  exec python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$3"
+fi
+exec /usr/bin/stat "$@"

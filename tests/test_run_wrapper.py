@@ -93,6 +93,7 @@ class TestFullFlow(WrapperRun):
             sj = json.loads((self.out / sweep / "sweep.json").read_text())
             self.assertRegex(sj["git_commit"], r"^[0-9a-f]{40}$")
             self.assertEqual(sj["image_id"], "sha256:fakeimage")
+            self.assertEqual(sj["image_revision"], "unknown")   # image built without the label
             self.assertIn(sj["git_dirty"], (True, False))
             run = next(p for p in (self.out / sweep).iterdir() if (p / "run.json").exists())
             self.assertEqual(json.loads((run / "run.json").read_text())["exit_code"], 0)
@@ -117,6 +118,14 @@ class TestFullFlow(WrapperRun):
 
         notes = self.notifications()
         self.assertEqual([n.split(": ", 1)[1] for n in notes], ["started", "done"])
+
+    def test_sweep_records_the_image_revision_label(self):
+        (self.fake / "image_rev").write_text("0123abcd" * 5 + "\n")
+        (self.fake / "loop_clips").write_text("\n")
+        (self.fake / "long_ids").write_text("\n")
+        self.assertEqual(self.run_wrapper().returncode, 0, self.pipeline_log())
+        sj = json.loads((self.out / "t1" / "sweep.json").read_text())
+        self.assertEqual(sj["image_revision"], "0123abcd" * 5)
 
     def test_no_loops_skips_the_loop_run(self):
         (self.fake / "loop_clips").write_text("\n")

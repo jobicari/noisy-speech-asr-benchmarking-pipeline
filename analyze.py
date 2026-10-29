@@ -116,7 +116,8 @@ def analyse_run(run_dir, price):
     fetch = sum(fetches) if fetches else None
     work = (wait if waits else prep) + infer + score + (fetch or 0)
     r.update({
-        "n_samples": len(samples) or None, "n_inferences": n_items, "audio_s": audio_s,
+        # One "sample" record per model, so count distinct samples
+        "n_samples": len({s.get("sample_idx") for s in samples}) or None, "n_inferences": n_items, "audio_s": audio_s,
         "fixed_s": fixed if phases else None,
         "prep_s": prep if samples else None, "infer_s": infer if samples else None,
         "score_s": score if samples else None,

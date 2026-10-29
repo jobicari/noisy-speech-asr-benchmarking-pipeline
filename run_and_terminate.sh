@@ -121,6 +121,22 @@ upload() {
     --entrypoint python "$IMAGE" /app/upload_results.py /upload "$GCS_PREFIX/$dest"
 }
 
+# Copy each run's final results pickle (named in its container.log) into the sweep's
+# GCS folder, next to that run's logs
+copy_results() {
+  local dir=$1 dest=$2 run key rc=0
+  for run in "$dir"/*/; do
+    [[ -f "$run/container.log" ]] || continue
+    key=$(grep -A1 -E '(dumped|Loaded) test results (to|from) cache:' "$run/container.log" | tail -1 | tr -d '[:space:]' || true)
+    [[ -n "$key" ]] || { log "No results key in $run/container.log: nothing to copy"; rc=1; continue; }
+    $DOCKER run --rm --env-file "$ENV_FILE" \
+      -v "$KEY_FILE:/secrets/key.json:ro" \
+      -v "$PWD/copy_results.py:/app/copy_results.py:ro" \
+      --entrypoint python "$IMAGE" /app/copy_results.py "$key" "$GCS_PREFIX/$dest/$(basename "$run")" || rc=1
+  done
+  return $rc
+}
+
 analyze() {
   python3 analyze.py "$1" --price-per-hour "$PRICE_PER_HOUR" "${@:2}" || log "analyze.py failed on $1 (uploading anyway)"
 }
@@ -208,8 +224,14 @@ if ! upload "$SWEEP_DIR" "$SWEEP_ID"; then
   notify "UPLOAD FAILED" "Upload of $SWEEP_ID not verified. Instance left running."
   NOTIFIED_EXIT=1; exit 1
 fi
+if [[ $main_ok == 1 ]] && ! copy_results "$SWEEP_DIR" "$SWEEP_ID"; then
+  log "RESULTS COPY NOT VERIFIED. Instance left running so nothing is lost."
+  notify "RESULTS COPY FAILED" "Results of $SWEEP_ID not copied next to the logs. Instance left running."
+  NOTIFIED_EXIT=1; exit 1
+fi
 if [[ -d "$SIDE_DIR" ]]; then
-  upload "$SIDE_DIR" "$SIDE_ID" || { log "Side run upload not verified (main results are safe)"; side_ok=0; }
+  { upload "$SIDE_DIR" "$SIDE_ID" && { [[ $side_ok != 1 ]] || copy_results "$SIDE_DIR" "$SIDE_ID"; }; } \
+    || { log "Side run upload or results copy not verified (main results are safe)"; side_ok=0; }
 fi
 
 # ---- 4. Terminate ------------------------------------------------------------

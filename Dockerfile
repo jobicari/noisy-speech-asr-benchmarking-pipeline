@@ -22,9 +22,6 @@ WORKDIR /app
 # torchcodec is included here (same index) so it is a CUDA build that matches
 # torch: datasets' audio decoding backend requires it, it's not optional despite
 # not being imported directly anywhere in src/.
-RUN pip install --no-cache-dir \
-    "torch==2.14.1+cu126" "torchaudio==2.11.0+cu126" "torchcodec==0.17.0+cu126" \
-    --index-url https://download.pytorch.org/whl/cu126
 
 COPY requirements-docker.txt constraints-docker.txt ./
 RUN pip install --no-cache-dir -r requirements-docker.txt -c constraints-docker.txt

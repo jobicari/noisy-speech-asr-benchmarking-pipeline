@@ -90,7 +90,7 @@ Inference seconds per model (`models7_smoke`, 20 samples × 22 corruptions):
 ### Next
 1. Analyse the 2000-sample results: WER/CER per model × corruption, the size curve, and wav2vec2 vs Whisper.
 2. Optional speed work: profile one Whisper call, or run two models at once in separate processes (the GPU still has headroom).
-3. Later: GitHub Container Registry instead of building on each instance.
+3. Later: build and push the image from CI instead of from the Mac.
 
 ### Model comparison
 The research question is how noise robustness scales with model size, with one model trained differently as a contrast:
@@ -264,11 +264,37 @@ mkdir -p ~/hf-cache && chmod 777 ~/hf-cache   # container user 'app' must be abl
 ```
 The Dockerfile sets `HF_HOME=/app/.cache/huggingface`, but every `docker run` starts a fresh container, so without a mount each run downloads every model again (several GB with medium and large-v3) and that time lands in "fixed" seconds. Mounting `~/hf-cache` there keeps the downloads between runs.
 
-### 3. Build
+### 3. Image
+
+The image is `python:3.12-slim` with CUDA torch from the `cu126` wheel index (all library versions pinned, see [Known gotchas](#known-gotchas)), ffmpeg and libsndfile, and runs as a non-root `app` user. `src/` and `app.py` are copied in, so the image must be rebuilt after every code change. Every command below uses the local tag `asr-benchmark:lambda` (the scripts' default `IMAGE`), whichever way you get the image.
+
+**Build on the Mac and push to Docker Hub** (once per code change). The Mac builds ARM by default, so ask for x86. Build from a clean checkout of the commit the instance will clone, and tag the image with that commit:
 ```bash
-docker build -t asr-benchmark:lambda .
+git status --porcelain              # must print nothing
+REV=$(git rev-parse HEAD)
+docker login
+docker buildx build --platform linux/amd64 \
+  --label org.opencontainers.image.revision=$REV \
+  -t <dockerhub-user>/asr-benchmark:${REV:0:7} -t <dockerhub-user>/asr-benchmark:lambda \
+  --push .
 ```
-The image is `python:3.12-slim` with CUDA torch from the `cu126` wheel index (all library versions pinned, see [Known gotchas](#known-gotchas)), ffmpeg and libsndfile, and runs as a non-root `app` user. `src/` and `app.py` are copied in, so rebuild after every pull. Keep `asr-benchmark:local` (ARM, Mac) and `asr-benchmark:lambda` (x86) separate.
+The `revision` label is how a sweep finds out which code is in the image (`run_sweep.sh` writes it to `sweep.json` as `image_revision`). The `:lambda` tag always points at the latest push; the commit tag never moves. The image is about 4 GB. If the Docker Hub repository is private, the instance needs `docker login` too.
+
+**On the instance: pull** the image for the commit you cloned, and give it the local tag:
+```bash
+REV=$(git rev-parse HEAD)
+docker pull <dockerhub-user>/asr-benchmark:${REV:0:7}
+docker tag <dockerhub-user>/asr-benchmark:${REV:0:7} asr-benchmark:lambda
+docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' asr-benchmark:lambda   # must print $REV
+```
+If the pull fails with "not found", no image was pushed for that commit: push one from the Mac, or build on the instance.
+
+**Or build on the instance** (no Docker Hub, about 10 minutes, and the same pinned versions):
+```bash
+docker build --label org.opencontainers.image.revision=$(git rev-parse HEAD) -t asr-benchmark:lambda .
+```
+
+Keep `asr-benchmark:local` (ARM, Mac) and `asr-benchmark:lambda` (x86) separate.
 
 ### 4. Single run
 ```bash
@@ -282,7 +308,7 @@ docker run --rm --gpus all --env-file .env.docker \
 Run long jobs inside `tmux` so a dropped SSH connection doesn't kill them.
 
 ### 5. Benchmark sweeps on Lambda
-`run_sweep.sh` runs the container once per config and repeat. For each run it records wall time, `nvidia-smi` samples every 500 ms, `docker stats` CPU, the container log, and the extracted `[TIMING]` lines. `sweep.json` records the GPU, the image id, and the git commit of the checkout (with a dirty flag), so a sweep can be traced back to its code.
+`run_sweep.sh` runs the container once per config and repeat. For each run it records wall time, `nvidia-smi` samples every 500 ms, `docker stats` CPU, the container log, and the extracted `[TIMING]` lines. `sweep.json` records the GPU, the image id, the commit the image was built from (`image_revision`, from its revision label), and the git commit of the checkout (with a dirty flag), so a sweep can be traced back to its code. The two commits should match.
 
 Example: smoke run of the current setup (one config, one repeat):
 ```bash
@@ -358,7 +384,7 @@ REPEATS=1 ./run_and_terminate.sh
 ```
 It should end with `VERIFIED N files in gs://.../lambda_bench_runs/automation_test/`.
 
-Smoke test after building a new image (no terminate, a few minutes). It runs one short and one long clip on all 7 models, then the side run on the long one:
+Smoke test after a new image (built or pulled; no terminate, a few minutes). It runs one short and one long clip on all 7 models, then the side run on the long one:
 ```bash
 SWEEP_ID=smoke_longclip TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \

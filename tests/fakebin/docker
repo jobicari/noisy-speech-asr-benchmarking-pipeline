@@ -4,12 +4,15 @@
 #   containers/<name>.*  env, log and exit code of each detached run
 #   long_ids, loop_clips what find_long_ids.py / find_loop_clips.py print
 #   copy_exit            exit code of copy_results.py (default 0)
+#   image_rev            the image's revision label (default: none)
 set -u
 mkdir -p "$FAKE_DIR/containers"
 cmd=$1; shift
 case $cmd in
   info|rm|stop) exit 0 ;;
-  image) echo "sha256:fakeimage"; exit 0 ;;
+  image) if [[ "$*" == *revision* ]]; then cat "$FAKE_DIR/image_rev" 2>/dev/null || echo "<no value>"
+         else echo "sha256:fakeimage"; fi
+         exit 0 ;;
   stats) sleep 0.2; echo "12.5%,1GiB / 8GiB"; exit 0 ;;
   wait) sleep 0.5; cat "$FAKE_DIR/containers/$1.exit"; exit 0 ;;
   logs) [[ $1 == -f ]] && shift; cat "$FAKE_DIR/containers/$1.log"; exit 0 ;;

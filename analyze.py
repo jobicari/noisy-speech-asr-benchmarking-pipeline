@@ -53,16 +53,17 @@ def read_gpu(path):
     rows = []
     if not path.exists():
         return rows
-    for r in csv.reader(path.open()):
-        if len(r) < 7:
-            continue
-        try:
-            ts = datetime.strptime(r[0].strip(), "%Y/%m/%d %H:%M:%S.%f").timestamp()
-            rows.append({"t": ts, "util": float(r[2]), "mem_util": float(r[3]),
-                         "mem_used": float(r[4]), "mem_total": float(r[5]),
-                         "power": float(r[6]) if r[6].strip() not in ("[N/A]", "") else None})
-        except ValueError:
-            continue
+    with path.open() as f:
+        for r in csv.reader(f):
+            if len(r) < 7:
+                continue
+            try:
+                ts = datetime.strptime(r[0].strip(), "%Y/%m/%d %H:%M:%S.%f").timestamp()
+                rows.append({"t": ts, "util": float(r[2]), "mem_util": float(r[3]),
+                             "mem_used": float(r[4]), "mem_total": float(r[5]),
+                             "power": float(r[6]) if r[6].strip() not in ("[N/A]", "") else None})
+            except ValueError:
+                continue
     return rows
 
 

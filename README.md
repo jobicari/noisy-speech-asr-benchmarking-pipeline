@@ -27,6 +27,7 @@ It runs in two places:
 - **HF model cache on the host.** `~/hf-cache` is mounted into the container, so models are downloaded once per instance instead of once per run.
 - **Clips over 30 s.** Whisper only takes 30 s per call. `WHISPER_LONGFORM=chunked` (default) splits longer clips into overlapping 30 s chunks, decodes them in parallel and stitches the text back together; clips of 30 s or less are unchanged. `WHISPER_LONGFORM=sequential` uses Whisper's own long-form decoding with timestamps instead (more accurate on long audio, but it also changes decoding of short clips). Each result row stores `duration_s`. LibriSpeech test-clean has 7 clips over 30 s and 4 more just under, which reverb can push over.
 - **Long-clip side run.** After the main sweep, `run_and_terminate.sh` finds every sample with a clip over 30 s (`find_long_ids.py`) and reruns them on the Whisper models with `WHISPER_LONGFORM=sequential`, so chunked and sequential decoding can be compared on the same audio.
+- **Looped-clip side run.** Small Whisper models sometimes repeat a phrase until the 448-token limit on badly damaged audio, which drives WER far above 100%. The main run keeps plain greedy decoding. After it, `run_and_terminate.sh` finds every clip where a Whisper model looped (`find_loop_clips.py`: the transcript compresses more than 2.4× with zlib, the test OpenAI's Whisper uses) and reruns only those clips on the Whisper models with `WHISPER_FALLBACK=True` (OpenAI-style temperature fallback), so each looped transcript can be compared with what the model gives when pushed out of the loop.
 - **Crash guard and notifications.** `run_and_terminate.sh` only terminates the instance if every run exited 0 and logged `RUN COMPLETED SUCCESSFULLY`. With `NTFY_TOPIC` set, it pushes start, failure and done alerts to the ntfy app.
 - **Fair text normalization.** References and transcripts both go through Whisper's `EnglishTextNormalizer` (lowercase, no punctuation, numbers as digits, standard spellings and abbreviations), so a model that writes "20" or "Mr." is not penalised against references that spell them out. WER from runs before this change is not comparable with later runs.
 
@@ -170,6 +171,8 @@ Everything is set through environment variables. Locally they come from `.env` (
 | `SAMPLES_PER_CALL` | `1` | Prepped samples whose clips go into one model call. Groups never cross a checkpoint; the last group of a checkpoint can be smaller. Set `BATCH_SIZE` to 22 × K to match |
 | `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMBA_NUM_THREADS` | `2` | Thread caps for every process (workers and main). Use `2` on the A10 |
 | `WHISPER_LONGFORM` | `chunked` / `sequential` | How Whisper handles clips over 30 s (see [Done](#done)). Default `chunked` |
+| `WHISPER_FALLBACK` | `False` | `True` turns on OpenAI-style temperature fallback for Whisper: temperatures 0 to 1 in steps of 0.2, `compression_ratio_threshold=1.35` (token space, the equivalent of 2.4 on text) and `logprob_threshold=-1.0`. Seeded from `SEED`. Used by the looped-clip side run |
+| `CLIPS` | `6930-75918-0003\|BL_500_1000,6930-75918-0004\|none` | Only run these clips, as `sample_id\|corr_type` pairs joined by commas. Overrides `SAMPLE_IDS`; set `NUMBER_OF_SAMPLES` to the number of distinct samples. Pass it with `EXTRA_DOCKER_ARGS`, like `SAMPLE_IDS` |
 | `SAMPLE_IDS` | `2094-142345-0008,1995-1836-0004` | Only run these sample ids (the stream is filtered before `NUMBER_OF_SAMPLES` is applied, so set that to the id count). Contains commas, so pass it with `EXTRA_DOCKER_ARGS="-e SAMPLE_IDS=..."`, not `PER_RUN_ENV` |
 | `SEED` | `42` | Base seed for the corruptions |
 | `RUN_POSTFIX` | `bs22_w4_r1` | Appended to the run label. Use a new one for every benchmark run |
@@ -319,15 +322,16 @@ How to read a worker sweep: `wait_s` should drop as workers increase until it re
 `run_and_terminate.sh` wraps `run_sweep.sh` for long runs:
 1. Main sweep, then a check that every run exited 0 and logged `RUN COMPLETED SUCCESSFULLY`.
 2. Long-clip side run (only if the main sweep succeeded): `find_long_ids.py` reads the results pickle named in `container.log` and lists every sample with a clip over `LONGFORM_MIN_S` (default 30). Those samples are rerun on the Whisper models from `HF_MODELS` (or `LONGFORM_MODELS`) with `WHISPER_LONGFORM=sequential`, into the sweep `<SWEEP_ID>_longform`.
-3. `analyze.py` on both sweeps.
-4. Upload both to `gs://<bucket>/lambda_bench_runs/` and verify every file. A snapshot of the pipeline log is uploaded as `<SWEEP_ID>/pipeline.log`.
-5. Terminate, only if the main sweep succeeded and its upload verified. A failed side run is reported but does not block termination.
+3. Looped-clip side run (only if the main sweep succeeded): `find_loop_clips.py` lists every (sample, corruption) clip where a Whisper model's transcript compresses more than `LOOP_MIN_RATIO` (default 2.4). Those clips are rerun on the Whisper models from `HF_MODELS` (or `LOOP_MODELS`) with `WHISPER_FALLBACK=True` and `SAMPLES_PER_CALL=20`, into the sweep `<SWEEP_ID>_loops`. fullrun2000 had 1,077 such clips in 959 samples.
+4. `analyze.py` on all sweeps.
+5. Upload them to `gs://<bucket>/lambda_bench_runs/` and verify every file. A snapshot of the pipeline log is uploaded as `<SWEEP_ID>/pipeline.log`. Then each successful run's results pickle is copied inside GCS to `lambda_bench_runs/<sweep>/<run_id>/` (`copy_results.py`), so results and timing live together. A failed copy of the main results keeps the instance up.
+6. Terminate, only if the main sweep succeeded and its upload verified. A failed side run is reported but does not block termination.
 
 Shutting down from inside the instance (`sudo shutdown`) does **not** stop Lambda billing; only terminating does.
 
-Extra variables (on top of `run_sweep.sh`'s): `TERMINATE` (1/0), `TERMINATE_DELAY` (default 120 s), `TERMINATE_ON_FAILURE` (default 0; 1 terminates even after a failed main sweep, to cap cost), `LONGFORM_RUN` (default 1; 0 skips the side run), `LONGFORM_MIN_S`, `LONGFORM_MODELS`, `NTFY_TOPIC`, `PRICE_PER_HOUR`, `TARGET_INFERENCES`, `GCS_PREFIX`.
+Extra variables (on top of `run_sweep.sh`'s): `TERMINATE` (1/0), `TERMINATE_DELAY` (default 120 s), `TERMINATE_ON_FAILURE` (default 0; 1 terminates even after a failed main sweep, to cap cost), `LONGFORM_RUN` (default 1; 0 skips the side run), `LONGFORM_MIN_S`, `LONGFORM_MODELS`, `LOOP_RUN` (default 1; 0 skips the looped-clip run), `LOOP_MIN_RATIO`, `LOOP_MODELS`, `NTFY_TOPIC`, `STALL_MIN` (default 30; 0 turns the stall alert off), `PRICE_PER_HOUR`, `TARGET_INFERENCES`, `GCS_PREFIX`.
 
-**Notifications:** install the ntfy app (iOS/Android), subscribe to a hard-to-guess topic name, and put `NTFY_TOPIC=<topic>` in `.env.docker` (or set it in the shell). Alerts: started, main run failed, side run failed, upload failed, script exited unexpectedly, done. No account is needed, but anyone who knows the topic can read it, so keep the name private.
+**Notifications:** install the ntfy app (iOS/Android), subscribe to a hard-to-guess topic name, and put `NTFY_TOPIC=<topic>` in `.env.docker` (or set it in the shell). Alerts: started, main run failed, side run failed, upload failed, results copy failed, no log output for `STALL_MIN` minutes (the run may be stuck; it is not stopped), script exited unexpectedly, done. No account is needed, but anyone who knows the topic can read it, so keep the name private.
 
 One-time setup per instance:
 1. Create an API key in the Lambda Cloud console (API keys page). Copy it to the instance:
@@ -368,6 +372,16 @@ Main run: 2 × 22 × 7 = 308 inferences. Side run: 1 × 22 × 6 = 132. Check:
 3. In `smoke_longclip_longform/*/container.log`, `run_label` ends with `smoke_longclip_longform`. That proves the side run's `-e` overrides (they come after `PER_RUN_ENV`, and Docker keeps the last value) took effect.
 4. The log ends with `Done (TERMINATE=0). main=ok side=1`, and both folders say `VERIFIED`.
 5. The ntfy app got "started" and "done".
+
+Smoke test of the looped-clip run (no terminate, a few minutes). In fullrun2000, whisper-tiny looped on `BL_500_1000` for both samples:
+```bash
+SWEEP_ID=smoke_loops TERMINATE=0 LONGFORM_RUN=0 CONFIGS="SAMPLES_PER_CALL=1" \
+ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
+EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface -e SAMPLE_IDS=6930-75918-0003,6930-75918-0004" \
+PER_RUN_ENV="RUN_POSTFIX=smoke_loops_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2,CHECKPOINT_SIZE=2,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+REPEATS=1 ./run_and_terminate.sh
+```
+Check that the pipeline log shows `Loop side run smoke_loops_loops: N clips in M samples`, that `smoke_loops_loops/*/container.log` ends with `RUN COMPLETED SUCCESSFULLY` and its `run_config` record has `"WHISPER_FALLBACK": true`, that the looped transcripts in its results differ from the main run's, and that the log ends with `loops=1` and a `VERIFIED copy` line per run.
 
 Optional guard test: rerun with `-e HF_MODELS=bad/model` added to `EXTRA_DOCKER_ARGS` (and a new `SWEEP_ID`). Expect a "MAIN RUN FAILED" alert, no side run, and `Main sweep failed: instance left running`.
 

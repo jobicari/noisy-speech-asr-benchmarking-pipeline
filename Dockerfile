@@ -15,19 +15,19 @@ WORKDIR /app
 # Install CUDA-enabled torch/torchaudio first (large, rarely-changing layer).
 # cu126 wheels bundle their own CUDA runtime, so no CUDA base image is needed —
 # only the host's NVIDIA driver + nvidia-container-toolkit at `docker run` time.
-# Pinned to >=2.6: transformers (installed unpinned below) assumes torch.accelerator,
-# which only exists from 2.6 onward — an unpinned torch install can resolve to an
-# older build and crash transformers' import with "no attribute 'accelerator'".
-# torchcodec is included here (same index) so pip resolves a CUDA build that
-# actually matches the pinned torch/torchaudio versions — datasets' audio
-# decoding backend requires it, it's not optional despite not being imported
-# directly anywhere in src/.
+# Exact versions, so a rebuild runs the same code. Keep them in sync with
+# constraints-docker.txt, which pins everything installed below.
+# torch must stay >= 2.6: transformers assumes torch.accelerator, and an older build
+# crashes its import with "no attribute 'accelerator'".
+# torchcodec is included here (same index) so it is a CUDA build that matches
+# torch: datasets' audio decoding backend requires it, it's not optional despite
+# not being imported directly anywhere in src/.
 RUN pip install --no-cache-dir \
-    "torch>=2.6" "torchaudio>=2.6" torchcodec \
+    "torch==2.14.1+cu126" "torchaudio==2.11.0+cu126" "torchcodec==0.17.0+cu126" \
     --index-url https://download.pytorch.org/whl/cu126
 
-COPY requirements-docker.txt .
-RUN pip install --no-cache-dir -r requirements-docker.txt
+COPY requirements-docker.txt constraints-docker.txt ./
+RUN pip install --no-cache-dir -r requirements-docker.txt -c constraints-docker.txt
 
 COPY src/ /app/src/
 COPY app.py /app/app.py

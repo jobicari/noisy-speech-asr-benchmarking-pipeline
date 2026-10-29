@@ -8,11 +8,23 @@ from asr_pipeline_benchmark.audio_analysis import analyze_asr_audio_health
 
 
 _corruptions = None  # one per worker process
+_clips = {}
 
-def init_worker(test_type, ir):
-    global _corruptions
+def init_worker(test_type, ir, clips=None):
+    global _corruptions, _clips
     lst = CorruptionListFull(ir) if test_type in ("fullDr", "fullRun") else CorruptionListShort()
     _corruptions = lst.corruptions
+    _clips = clips or {}
+    unknown = {c for corrs in _clips.values() for c in corrs} - set(_corruptions)
+    if unknown:
+        raise ValueError(f"CLIPS names corruptions not in the {test_type} list: {sorted(unknown)}")
+
+
+def _sample_corruptions(sample_id):
+    """The corruptions to run on a sample: all of them, or only those listed in CLIPS"""
+    if not _clips:
+        return _corruptions.items()
+    return [(c, _corruptions[c]) for c in _clips.get(sample_id, [])]
 
 
 def prep_sample(sample):
@@ -27,9 +39,10 @@ def prep_sample(sample):
 
     # Compute ref once per sample
     ref = cleanup_pipeline(sample["text"])
-    n_items = len(_corruptions.items())
+    corruptions = _sample_corruptions(sample['id'])
+    n_items = len(corruptions)
 
-    for corr_type, corr_fn in _corruptions.items():
+    for corr_type, corr_fn in corruptions:
         np.random.seed(_seed( sample['id'], corr_type))
         corr_audio_array = corr_fn(audio_array)
         # Build the list of raw audio file to send to the transcriber engine

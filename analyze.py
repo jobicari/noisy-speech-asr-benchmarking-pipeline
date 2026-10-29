@@ -53,16 +53,17 @@ def read_gpu(path):
     rows = []
     if not path.exists():
         return rows
-    for r in csv.reader(path.open()):
-        if len(r) < 7:
-            continue
-        try:
-            ts = datetime.strptime(r[0].strip(), "%Y/%m/%d %H:%M:%S.%f").timestamp()
-            rows.append({"t": ts, "util": float(r[2]), "mem_util": float(r[3]),
-                         "mem_used": float(r[4]), "mem_total": float(r[5]),
-                         "power": float(r[6]) if r[6].strip() not in ("[N/A]", "") else None})
-        except ValueError:
-            continue
+    with path.open() as f:
+        for r in csv.reader(f):
+            if len(r) < 7:
+                continue
+            try:
+                ts = datetime.strptime(r[0].strip(), "%Y/%m/%d %H:%M:%S.%f").timestamp()
+                rows.append({"t": ts, "util": float(r[2]), "mem_util": float(r[3]),
+                             "mem_used": float(r[4]), "mem_total": float(r[5]),
+                             "power": float(r[6]) if r[6].strip() not in ("[N/A]", "") else None})
+            except ValueError:
+                continue
     return rows
 
 
@@ -116,7 +117,8 @@ def analyse_run(run_dir, price):
     fetch = sum(fetches) if fetches else None
     work = (wait if waits else prep) + infer + score + (fetch or 0)
     r.update({
-        "n_samples": len(samples) or None, "n_inferences": n_items, "audio_s": audio_s,
+        # One "sample" record per model, so count distinct samples
+        "n_samples": len({s.get("sample_idx") for s in samples}) or None, "n_inferences": n_items, "audio_s": audio_s,
         "fixed_s": fixed if phases else None,
         "prep_s": prep if samples else None, "infer_s": infer if samples else None,
         "score_s": score if samples else None,

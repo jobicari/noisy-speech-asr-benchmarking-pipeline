@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# GNU date's %N (nanoseconds), which BSD date on macOS lacks
+for a in "$@"; do
+  [[ $a == *%N* ]] && { python3 -c 'import time; print(f"{time.time():.9f}")'; exit; }
+done
+exec /bin/date "$@"

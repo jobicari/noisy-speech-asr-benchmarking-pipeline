@@ -12,6 +12,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# Fail once, with the fix, instead of one import error per test file
+_missing = []
+for _mod in ("dotenv", "numpy", "scipy", "librosa", "soundfile", "jiwer", "pandas", "google.cloud.storage"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        _missing.append(_mod)
+if _missing:
+    raise ImportError(
+        f"{sys.executable} lacks {', '.join(_missing)}. Run the tests with the project's "
+        "environment: conda activate asr-benchmark-pipe (see environment.yml)")
+
 # Config() runs at import time in most modules and validates these
 os.environ.setdefault("TEST_TYPE", "smallDr")
 os.environ.setdefault("INFERENCE_BACKEND", "hf")

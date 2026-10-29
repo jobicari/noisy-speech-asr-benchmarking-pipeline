@@ -421,6 +421,25 @@ watch -n 30 ./progress.sh                                     # newest run under
 ```
 It reads the live `container.log` and shows models, current checkpoint, samples done / total, rate, ETA, and how long ago the last sample finished. A resumed run counts the skipped samples. It uses GNU `find`, so it runs on the instance, not on macOS.
 
+### Tests
+
+Run before rebuilding the image. They need no GPU, network or cloud credentials, and take about 30 s:
+
+```bash
+python -m unittest discover -s tests -t . -v
+```
+
+Use the project's Python environment, from the repo root. torch and transformers are never imported: the model loader is checked against stand-ins, and `run_and_terminate.sh` and `run_sweep.sh` run end to end against fake `docker`, `nvidia-smi` and `curl` in `tests/fakebin` (nothing is uploaded, terminated or sent). Covered:
+
+| File | What |
+|---|---|
+| `tests/test_config_prep.py` | `CLIPS` parsing, `WHISPER_FALLBACK`, the prep filter, and that a rerun of one clip gets exactly the audio of the full run |
+| `tests/test_models.py` | `run_checkpoint_loop`: rows, every `[TIMING]` record, checkpoints, resume (`resume_skip`), cached results, `SAMPLES_PER_CALL` grouping, `CLIPS`; WER of a loop; the Whisper loader's greedy, fallback and CTC settings |
+| `tests/test_scripts.py` | `find_loop_clips.py`, `find_long_ids.py`, `copy_results.py` (fake GCS), `analyze.py` (distinct samples, fixed time, failed runs, `--combine`), the `run_config` record, `progress.sh` |
+| `tests/test_run_wrapper.py` | Detached start, main run, long-clip and looped-clip side runs and their env, `sweep.json` provenance, timing extraction, uploads, results copy, notifications, failure paths, the stall alert, script permissions |
+
+What they can't cover: real decoding on a GPU (including the fallback), GCS itself, and the Lambda API. The smoke tests in [Unattended runs](#6-unattended-runs-progress-upload-terminate) do that on the instance.
+
 ---
 
 ## Outputs

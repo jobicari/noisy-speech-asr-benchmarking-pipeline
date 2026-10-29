@@ -82,7 +82,8 @@ notify() {
 # Any unexpected exit (set -e, a failed command) also sends a notification
 NOTIFIED_EXIT=0   # set to 1 where an exit already sent its own notification
 WATCH_PID=
-trap 'rc=$?; [[ -n "$WATCH_PID" ]] && kill "$WATCH_PID" 2>/dev/null; [[ $rc -ne 0 && $NOTIFIED_EXIT == 0 ]] && notify "script exited ($rc)" "run_and_terminate.sh stopped with exit $rc. Instance left running. See $PIPELINE_LOG"' EXIT
+# Stop the stall watcher and its sleep, which would otherwise hold the log open for a minute
+trap 'rc=$?; [[ -n "$WATCH_PID" ]] && kill $(pgrep -P "$WATCH_PID") "$WATCH_PID" 2>/dev/null; [[ $rc -ne 0 && $NOTIFIED_EXIT == 0 ]] && notify "script exited ($rc)" "run_and_terminate.sh stopped with exit $rc. Instance left running. See $PIPELINE_LOG"' EXIT
 
 # Stall alert: a hung run (e.g. a killed prep worker blocks the pool forever) keeps
 # billing without failing. Alert once per stall when the newest container.log of this

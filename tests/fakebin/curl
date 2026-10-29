@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Records notifications; nothing leaves the machine
+echo "$*" >> "$FAKE_DIR/curl.log"

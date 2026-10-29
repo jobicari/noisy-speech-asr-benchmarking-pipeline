@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Fake docker for the wrapper tests. State lives in $FAKE_DIR:
+#   calls.log            every `docker run --rm ... python /app/<script>` call
+#   containers/<name>.*  env, log and exit code of each detached run
+#   long_ids, loop_clips what find_long_ids.py / find_loop_clips.py print
+#   copy_exit            exit code of copy_results.py (default 0)
+set -u
+mkdir -p "$FAKE_DIR/containers"
+cmd=$1; shift
+case $cmd in
+  info|rm|stop) exit 0 ;;
+  image) echo "sha256:fakeimage"; exit 0 ;;
+  stats) sleep 0.2; echo "12.5%,1GiB / 8GiB"; exit 0 ;;
+  wait) sleep 0.5; cat "$FAKE_DIR/containers/$1.exit"; exit 0 ;;
+  logs) [[ $1 == -f ]] && shift; cat "$FAKE_DIR/containers/$1.log"; exit 0 ;;
+  run) ;;
+  *) echo "fake docker: unexpected $cmd" >&2; exit 2 ;;
+esac
+
+detached=0 name="" entry="" envs=() args=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -d) detached=1 ;;
+    --rm) ;;
+    --gpus|--env-file|-v) shift ;;
+    --name) name=$2; shift ;;
+    -e) envs+=("$2"); shift ;;
+    --entrypoint) entry=$2; shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+
+if [[ -n "$entry" ]]; then
+  script=$(basename "${args[1]}")
+  echo "$script ${args[*]:2}" >> "$FAKE_DIR/calls.log"
+  case $script in
+    find_long_ids.py) cat "$FAKE_DIR/long_ids" 2>/dev/null || echo ;;
+    find_loop_clips.py) cat "$FAKE_DIR/loop_clips" 2>/dev/null || echo ;;
+    upload_results.py) echo "VERIFIED 1 files in gs://bucket/${args[3]}/" ;;
+    copy_results.py) code=$(cat "$FAKE_DIR/copy_exit" 2>/dev/null || echo 0)
+                     [[ $code == 0 ]] && echo "VERIFIED copy" || echo "VERIFY FAILED" >&2
+                     exit "$code" ;;
+  esac
+  exit 0
+fi
+
+# Detached benchmark container: the last -e value of a variable wins, as in docker
+c="$FAKE_DIR/containers/$name"
+printf '%s\n' "${envs[@]}" > "$c.env"
+get() { grep -E "^$1=" "$c.env" | tail -1 | cut -d= -f2-; }
+postfix=$(get RUN_POSTFIX)
+{
+  echo "===== Run Batch Checkpoint Inference on $(get NUMBER_OF_SAMPLES) samples ====="
+  echo '[TIMING] {"ts": "2026-10-29T01:00:00+00:00", "event": "phase", "name": "startup", "seconds": 1.0}'
+  echo '[TIMING] {"ts": "2026-10-29T01:00:01+00:00", "event": "sample", "model": "m", "sample_idx": "s1", "n_items": 22, "audio_s": 10.0, "t_infer_s": 1.0, "t_score_s": 0.1, "t_wait_s": 0.0, "group_size": 1}'
+  if [[ "$(get FAIL_ME)" == 1 ]]; then
+    echo "Traceback: boom"
+  else
+    echo "Successfully dumped test results to cache: "
+    printf '\tresults/transcribe_cache/fullRun__hf__x__%s.pkl\n' "$postfix"
+    echo "RUN COMPLETED SUCCESSFULLY"
+  fi
+} > "$c.log"
+[[ "$(get FAIL_ME)" == 1 ]] && echo 1 > "$c.exit" || echo 0 > "$c.exit"
+echo "fakecontainerid"

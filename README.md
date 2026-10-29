@@ -429,7 +429,7 @@ Run before rebuilding the image. They need no GPU, network or cloud credentials,
 python -m unittest discover -s tests -t . -v
 ```
 
-Use the project's Python environment, from the repo root. torch and transformers are never imported: the model loader is checked against stand-ins, and `run_and_terminate.sh` and `run_sweep.sh` run end to end against fake `docker`, `nvidia-smi` and `curl` in `tests/fakebin` (nothing is uploaded, terminated or sent). Covered:
+Use the project's environment (`conda activate asr-benchmark-pipe`), from the repo root; another environment fails at once with the list of missing packages. torch and transformers are never imported: the model loader is checked against stand-ins, and `run_and_terminate.sh` and `run_sweep.sh` run end to end against fake `docker`, `nvidia-smi` and `curl` in `tests/fakebin` (nothing is uploaded, terminated or sent). Covered:
 
 | File | What |
 |---|---|

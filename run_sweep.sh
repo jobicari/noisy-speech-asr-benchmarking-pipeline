@@ -37,8 +37,11 @@ gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
 git_commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 git_dirty=$([[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]] && echo true || echo false)
 image_id=$($DOCKER image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || echo unknown)
+# Commit the image was built from, if it was built with the revision label (see README)
+image_rev=$($DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE" 2>/dev/null || true)
+[[ -n "$image_rev" && "$image_rev" != "<no value>" ]] || image_rev=unknown
 cat > "$SWEEP_DIR/sweep.json" <<EOF
-{"sweep_id": "$SWEEP_ID", "image": "$IMAGE", "image_id": "$image_id", "gpu": "$gpu_name",
+{"sweep_id": "$SWEEP_ID", "image": "$IMAGE", "image_id": "$image_id", "image_revision": "$image_rev", "gpu": "$gpu_name",
  "git_commit": "$git_commit", "git_dirty": $git_dirty,
  "host_cpus": $(nproc), "configs": "$CONFIGS", "repeats": $REPEATS,
  "started_utc": "$(date -u +%FT%TZ)"}

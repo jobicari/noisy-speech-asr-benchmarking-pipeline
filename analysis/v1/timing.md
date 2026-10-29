@@ -50,7 +50,7 @@ So the per-model and per-sample numbers below come from the first 316 samples on
 | wav2vec2-large | 66.0 | 3.0 % | 105.4 | 841 | 0.17 | 0.64 |
 
 - **large-v3 is 30 % of the GPU time**; large-v3 + turbo + medium are 69 %. Dropping or shrinking one of those is the only lever that moves total time much.
-- **Turbo is 1.5× faster than large-v3** (16.0 vs 10.5 inf/s) for 0.6 points of mean WER (5.9 vs 5.3, from the first look, a file not found in the repo or the checkout; the corpus WER in `results.md` is 5.68 vs 5.16).
+- **Turbo is 1.5× faster than large-v3** (16.0 vs 10.5 inf/s) for 0.5 points of corpus WER over all corruptions (5.68 vs 5.16, from `results.md`).
 - **tiny, base and small cost about the same**, and tiny is barely faster than small. Their medians scale with size, but their tails don't: p99 is 2-4 s, more than medium's. The slowest samples are short (e.g. small takes 4.2 s on a sample with 67 s of audio), which looks like repetition loops running to the token limit. That fits the WER > 100 % hallucination rows in `results.md`. Inferred from timing here; the transcript check in `../v2_readiness_review.md` later found loop rows running to the 448-token limit, which supports it.
 - **wav2vec2 (CTC, no decoder) is 10× faster than large-v3** and only 3 % of the run.
 

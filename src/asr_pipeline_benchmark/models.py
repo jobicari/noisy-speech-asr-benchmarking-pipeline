@@ -78,6 +78,17 @@ def load_hf_transcriber(model_id):
         call_kwargs = {"generation_config": whisper_config}
         if not chunked:
             call_kwargs["return_timestamps"] = True
+        if config.WHISPER_FALLBACK:
+            # Fallback samples at temperature > 0: seed it so a rerun gives the same text
+            from transformers import set_seed
+            set_seed(config.SEED)
+            # OpenAI transcribe() defaults. 1.35 is the token-space equivalent of its
+            # 2.4 text compression ratio.
+            call_kwargs.update(
+                temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                compression_ratio_threshold=1.35,
+                logprob_threshold=-1.0,
+            )
     else:
         asr_pipe = pipeline(
             "automatic-speech-recognition",

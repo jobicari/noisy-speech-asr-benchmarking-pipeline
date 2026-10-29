@@ -14,6 +14,19 @@ def _env_list(name, default):
 
 
 
+def _parse_clips(raw):
+    """'id|corr,id|corr' -> {id: [corr, ...]} in the order given"""
+    clips = {}
+    for pair in (p.strip() for p in raw.split(",")):
+        if not pair:
+            continue
+        sample_id, sep, corr_type = pair.partition("|")
+        if not sep or not sample_id or not corr_type:
+            raise ValueError(f"CLIPS entries must look like 'sample_id|corr_type'. Got {pair!r}")
+        clips.setdefault(sample_id, []).append(corr_type)
+    return clips
+
+
 @dataclass
 class Config:
     SEED: int = field(default_factory=lambda: int(os.getenv("SEED", 42)))
@@ -146,6 +159,15 @@ class Config:
     WHISPER_LONGFORM: str = field(
         default_factory=lambda: os.getenv("WHISPER_LONGFORM", "chunked")
     )
+    # OpenAI-style temperature fallback for Whisper: a transcript that repeats itself
+    # (compression ratio) or has a low average log-probability is decoded again at a
+    # higher temperature. Off for the main run, on for the looped-clip side run.
+    WHISPER_FALLBACK: bool = field(
+        default_factory=lambda: os.getenv("WHISPER_FALLBACK", "False").lower() in ("true", "1", "yes")
+    )
+    # Only run these clips: "sample_id|corr_type" pairs joined by commas.
+    # Empty = every corruption of every sample.
+    CLIPS: dict = field(default_factory=lambda: _parse_clips(os.getenv("CLIPS", "")))
 
 
     def __post_init__(self):

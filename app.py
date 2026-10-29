@@ -21,6 +21,8 @@ if __name__ == "__main__":
     # Filter dataset by sample ids if necessary - Used for testing
     import os
     ids = [i.strip() for i in os.getenv("SAMPLE_IDS", "").split(",") if i.strip()]
+    # CLIPS picks single corruptions of a sample, so it also limits the samples
+    ids = list(config.CLIPS) or ids
     if ids:
         dataset = dataset.filter(lambda sample: sample["id"] in ids)
     # ----------------------------------------------------------------------------------------
@@ -38,7 +40,7 @@ if __name__ == "__main__":
     # SPAWN POOL OF WORKERS
     # ----------------------------------------------------------------------------------------
     ctx = mp.get_context('spawn')
-    with ctx.Pool(config.N_PREP_WORKERS, initializer=init_worker, initargs=(config.TEST_TYPE, mit_ir)) as pool:
+    with ctx.Pool(config.N_PREP_WORKERS, initializer=init_worker, initargs=(config.TEST_TYPE, mit_ir, config.CLIPS)) as pool:
         # Dataset, IR, storage and pool start, before any model loads
         print_timing({
             "event": "phase",

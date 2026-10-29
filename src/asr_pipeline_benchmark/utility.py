@@ -132,7 +132,8 @@ def run_config_record(cfg):
     from importlib.metadata import version, PackageNotFoundError
 
     settings = {k: v if v is None or isinstance(v, (int, float, bool, list)) else str(v)
-                for k, v in asdict(cfg).items() if k != "GCS_BUCKET_NAME"}
+                for k, v in asdict(cfg).items() if k not in ("GCS_BUCKET_NAME", "CLIPS")}
+    settings["CLIPS"] = {"samples": len(cfg.CLIPS), "clips": sum(len(c) for c in cfg.CLIPS.values())}
     for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                  "NUMBA_NUM_THREADS", "SAMPLE_IDS"):
         settings[name] = os.getenv(name)

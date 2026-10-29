@@ -376,8 +376,17 @@ def run_checkpoint_loop(
                 print(f"Resuming pipeline from checkpoint {checkpoint_idx:04d} (sample {sample_counter})...")
 
                 # fast-forward the lazy iterator
+                timer_resume_start = time.perf_counter()
                 for _ in range(sample_counter):
                     next(limited_iterator, None)
+                record = {
+                    "event": "phase",
+                    "name": "resume_skip",
+                    "checkpoint_idx": checkpoint_idx,
+                    "samples_skipped": sample_counter,
+                    "seconds": time.perf_counter() - timer_resume_start
+                }
+                print_timing(record)
 
             else:
                 print("Non-contiguous checkpoints found; ignoring resume to keep sampling deterministic.")

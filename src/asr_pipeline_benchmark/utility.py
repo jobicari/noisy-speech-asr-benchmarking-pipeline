@@ -122,6 +122,39 @@ def print_timing(record):
 
 
 
+def run_config_record(cfg):
+    """Settings and library versions the run actually used, so a log can be traced
+    back to its setup. The bucket name is left out, as it is a personal value."""
+    import os
+    import platform
+    import sys
+    from dataclasses import asdict
+    from importlib.metadata import version, PackageNotFoundError
+
+    settings = {k: v if v is None or isinstance(v, (int, float, bool, list)) else str(v)
+                for k, v in asdict(cfg).items() if k != "GCS_BUCKET_NAME"}
+    for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                 "NUMBA_NUM_THREADS", "SAMPLE_IDS"):
+        settings[name] = os.getenv(name)
+
+    versions = {"python": platform.python_version()}
+    for pkg in ("torch", "transformers", "datasets", "jiwer", "numpy", "mlx-whisper"):
+        try:
+            versions[pkg] = version(pkg)
+        except PackageNotFoundError:
+            pass
+
+    # Only if the HF backend already loaded torch: importing it next to MLX can abort
+    # on macOS (two OpenMP runtimes)
+    gpu = None
+    torch = sys.modules.get("torch")
+    if torch is not None and torch.cuda.is_available():
+        gpu = torch.cuda.get_device_name(0)
+
+    return {"event": "run_config", "config": settings, "versions": versions, "gpu": gpu}
+
+
+
 def _sample_seed(sample_id):
     """Generate a deterministic seed for a given sample ID"""
     return (config.SEED + zlib.crc32(str(sample_id).encode())) % 2**32

@@ -45,8 +45,12 @@ Not tested yet: the fallback decoding itself, because torch aborts on import on 
 | B | Stall alert in `run_and_terminate.sh` | Done (b61fabc) |
 | C | Copy each run's results pickle next to its logs in GCS | Done (c11ce29) |
 | D | Upload `bs_sweep1` from the Mac | Done by Jo, 45 files verified in `lambda_bench_runs/bs_sweep1/` |
-| E | Pin library versions: build the image once, run the smoke tests, then pin what it installed in `requirements-docker.txt` and the Dockerfile. Today nothing is pinned, so a rebuild pulls the newest torch, transformers and datasets, and v1's versions were never recorded | Open, recommended |
+| E | Pin library versions. v1's versions were never recorded | Done (ede9a4e): torch 2.14.1, torchaudio 2.11.0, torchcodec 0.17.0 (cu126) in the Dockerfile, 88 more in `constraints-docker.txt`, resolved for linux x86_64 / Python 3.12 on 2026-10-29. Confirmed only once the image builds and the smoke tests pass |
 | - | Run label `fullrun2000b` for `SWEEP_ID` and `RUN_POSTFIX` | In the README on the readiness branch |
+
+## Test suite
+
+`python -m unittest discover -s tests -t .` (d09089e): 44 tests, about 25 s, no GPU, network or credentials. They cover the clip list and fallback switch, every timing record, checkpoints and resume, the Whisper loader settings, the loop finder, the GCS results copy, `analyze.py`, and `run_and_terminate.sh` end to end against fake docker. They found two bugs, both fixed: `run_sweep.sh` was not executable in git, so a fresh clone failed at once (bcfbb0f), and the stall watcher's `sleep` outlived the wrapper (1a37038). Real decoding on a GPU, GCS and the Lambda API are left to the smoke tests on the instance.
 
 ## Known gaps
 

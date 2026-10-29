@@ -18,6 +18,8 @@
 #   LONGFORM_MODELS      models for the side run (default: the Whisper models in HF_MODELS)
 #   NTFY_TOPIC           optional; push notifications to https://ntfy.sh/<topic> (keep it private).
 #                        Read from ENV_FILE if not set in the shell.
+#   STALL_MIN            with NTFY_TOPIC, alert when no run log has grown for this many minutes
+#                        (default 30; 0 turns it off). Alert only: the run is not stopped.
 #   DETACH               1 (default) re-run in the background, detached from the terminal, so a
 #                        dropped SSH session can't kill it; 0 to stay in the foreground
 #
@@ -39,6 +41,7 @@ PRICE_PER_HOUR="${PRICE_PER_HOUR:-1.29}"
 GCS_PREFIX="${GCS_PREFIX:-lambda_bench_runs}"
 LONGFORM_RUN="${LONGFORM_RUN:-1}"
 LONGFORM_MIN_S="${LONGFORM_MIN_S:-30}"
+STALL_MIN="${STALL_MIN:-30}"
 NTFY_TOPIC="${NTFY_TOPIC:-}"
 # Fall back to NTFY_TOPIC in the env file
 [[ -n "$NTFY_TOPIC" ]] || NTFY_TOPIC=$(grep -E '^NTFY_TOPIC=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' || true)
@@ -70,7 +73,27 @@ notify() {
 }
 # Any unexpected exit (set -e, a failed command) also sends a notification
 NOTIFIED_EXIT=0   # set to 1 where an exit already sent its own notification
-trap 'rc=$?; [[ $rc -ne 0 && $NOTIFIED_EXIT == 0 ]] && notify "script exited ($rc)" "run_and_terminate.sh stopped with exit $rc. Instance left running. See $PIPELINE_LOG"' EXIT
+WATCH_PID=
+trap 'rc=$?; [[ -n "$WATCH_PID" ]] && kill "$WATCH_PID" 2>/dev/null; [[ $rc -ne 0 && $NOTIFIED_EXIT == 0 ]] && notify "script exited ($rc)" "run_and_terminate.sh stopped with exit $rc. Instance left running. See $PIPELINE_LOG"' EXIT
+
+# Stall alert: a hung run (e.g. a killed prep worker blocks the pool forever) keeps
+# billing without failing. Alert once per stall when the newest container.log of this
+# sweep and its side runs has not grown for STALL_MIN minutes; alert again after it moves.
+watch_stall() {
+  local alerted="" log age
+  while sleep 60; do
+    log=$(ls -t "$OUT_ROOT/$SWEEP_ID"*/*/container.log 2>/dev/null | head -1 || true)
+    [[ -n "$log" ]] || continue
+    age=$(( $(date +%s) - $(stat -c %Y "$log") ))
+    if (( age < STALL_MIN * 60 )); then
+      alerted=""
+    elif [[ "$alerted" != "$log" ]]; then
+      log "No log output for $((age / 60)) min in $log"
+      notify "no progress for $((age / 60)) min" "Nothing new in $log for $((age / 60)) min. The run may be stuck; the instance is still billing."
+      alerted=$log
+    fi
+  done
+}
 
 DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 
@@ -120,6 +143,10 @@ else
   log "TERMINATE=0: will upload but not terminate"
 fi
 notify "started" "Sweep $SWEEP_ID started on $(hostname)"
+if [[ -n "$NTFY_TOPIC" && "$STALL_MIN" -gt 0 ]]; then
+  watch_stall &
+  WATCH_PID=$!
+fi
 
 # ---- 1. Main sweep -----------------------------------------------------------
 log "Starting sweep $SWEEP_ID"

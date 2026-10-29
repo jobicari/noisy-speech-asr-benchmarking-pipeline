@@ -268,7 +268,7 @@ The Dockerfile sets `HF_HOME=/app/.cache/huggingface`, but every `docker run` st
 ```bash
 docker build -t asr-benchmark:lambda .
 ```
-The image is `python:3.12-slim` with CUDA torch from the `cu126` wheel index, ffmpeg and libsndfile, and runs as a non-root `app` user. `src/` and `app.py` are copied in, so rebuild after every pull. Keep `asr-benchmark:local` (ARM, Mac) and `asr-benchmark:lambda` (x86) separate.
+The image is `python:3.12-slim` with CUDA torch from the `cu126` wheel index (all library versions pinned, see [Known gotchas](#known-gotchas)), ffmpeg and libsndfile, and runs as a non-root `app` user. `src/` and `app.py` are copied in, so rebuild after every pull. Keep `asr-benchmark:local` (ARM, Mac) and `asr-benchmark:lambda` (x86) separate.
 
 ### 4. Single run
 ```bash
@@ -458,7 +458,7 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **Stuck containers:** a container that hangs keeps running (and holding GPU memory) after the sweep moves on, and its run never reaches finalize, so its checkpoints stay in the bucket. Run `docker ps` before every sweep and `docker stop <name>` anything left over.
 - **Local checkpoint listing** used to return every `.pkl` in the checkpoint folder, so a local run could resume from or merge another run's checkpoints. It now matches the run's own prefix (`storage.py`). GCS was never affected.
 - **`docker builder prune`** wipes all build cache. Use `docker rmi <tag>` instead.
-- **Torch version:** must be ≥ 2.6 from the `cu126` index (transformers needs `torch.accelerator`).
+- **Library versions are pinned.** torch, torchaudio and torchcodec in the `Dockerfile` (≥ 2.6 from the `cu126` index: transformers needs `torch.accelerator`), everything else in `constraints-docker.txt`, so a rebuild installs the same code. To upgrade, change the versions, rebuild, run the smoke tests, then commit. Each run logs the versions it used in its `run_config` record.
 - **Clips over 30 s crash Whisper in short-form mode** ("more than 3000 mel input features"). The default `WHISPER_LONGFORM=chunked` handles them. MLX (`mlx-whisper`) does long-form by itself, so it never shows this error; test it with `INFERENCE_BACKEND=hf`.
 - **A failed run used to terminate the instance.** `run_sweep.sh` always exits 0 and only records the exit code in `run.json`, so the old wrapper uploaded the partial folder, verified it and terminated. The wrapper now checks each run's exit code and success line first.
 - **Spawn workers** re-import the main module. Heavy imports in `app.py` stay inside `if __name__ == "__main__":` so workers start light.

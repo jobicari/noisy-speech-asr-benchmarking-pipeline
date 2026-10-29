@@ -234,7 +234,7 @@ Notes:
 ### 2. Code and credentials
 ```bash
 # Clone with a short-lived, repo-scoped fine-grained PAT (enter it as the password)
-git clone -b exploration https://github.com/<your-github-user>/noisy-speech-asr-benchmarking-pipeline.git
+git clone -b main https://github.com/<your-github-user>/noisy-speech-asr-benchmarking-pipeline.git
 cd noisy-speech-asr-benchmarking-pipeline
 ```
 `.env.docker` is created on the Mac from the tracked template (`cp .env.docker.example .env.docker`, then fill in the HF token and bucket). From the Mac, copy the secrets (they are gitignored):
@@ -279,7 +279,7 @@ docker run --rm --gpus all --env-file .env.docker \
 Run long jobs inside `tmux` so a dropped SSH connection doesn't kill them.
 
 ### 5. Benchmark sweeps on Lambda
-`run_sweep.sh` runs the container once per config and repeat. For each run it records wall time, `nvidia-smi` samples every 500 ms, `docker stats` CPU, the container log, and the extracted `[TIMING]` lines.
+`run_sweep.sh` runs the container once per config and repeat. For each run it records wall time, `nvidia-smi` samples every 500 ms, `docker stats` CPU, the container log, and the extracted `[TIMING]` lines. `sweep.json` records the GPU, the image id, and the git commit of the checkout (with a dirty flag), so a sweep can be traced back to its code.
 
 Example: smoke run of the current setup (one config, one repeat):
 ```bash
@@ -311,7 +311,7 @@ python3 analyze.py --combine results/lambda_bench_runs/fullrun2000 results/lambd
 ```
 It writes one row per attempt and a TOTAL row: wall, fixed, inferences, audio seconds and cost are added, and the rates are recomputed from the sums. Failed attempts count (their GPU time was paid for). `duplicated_inferences` counts work redone after the resume.
 
-What the report shows per config: steady-state inferences/s, audio seconds per second and RTF, the GPU share of per-sample time, per-sample and per-inference latency percentiles, GPU utilisation, VRAM peak, power, container CPU, and (with a price) cost per audio hour and a projection for the target run. The run table splits wall time into fixed (model load and finalize), prep (worker CPU time), wait, fetch, inference, score and overhead.
+What the report shows per config: steady-state inferences/s, audio seconds per second and RTF, the GPU share of per-sample time, per-sample and per-inference latency percentiles, GPU utilisation, VRAM peak, power, container CPU, and (with a price) cost per audio hour and a projection for the target run. The run table splits wall time into fixed (startup, model load, resume skip and finalize), prep (worker CPU time), wait, fetch, inference, score and overhead.
 
 How to read a worker sweep: `wait_s` should drop as workers increase until it reaches about 0. The smallest worker count that gets there is the one to use. Ignore the "× M1" column: its baseline mixes two model sizes.
 
@@ -371,15 +371,15 @@ Main run: 2 × 22 × 7 = 308 inferences. Side run: 1 × 22 × 6 = 132. Check:
 
 Optional guard test: rerun with `-e HF_MODELS=bad/model` added to `EXTRA_DOCKER_ARGS` (and a new `SWEEP_ID`). Expect a "MAIN RUN FAILED" alert, no side run, and `Main sweep failed: instance left running`.
 
-Full run (2000 samples × 22 corruptions × 7 models = 308,000 inferences, about 3.6 h):
+Full run (2000 samples × 22 corruptions × 7 models = 308,000 inferences, about 4 h and $5.20 on an A10 at $1.29/h, measured on fullrun2000):
 ```bash
-SWEEP_ID=fullrun2000 CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=308000 \
+SWEEP_ID=fullrun2000b CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=308000 \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
-PER_RUN_ENV="RUN_POSTFIX=fullrun2000_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
+PER_RUN_ENV="RUN_POSTFIX=fullrun2000b_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
 REPEATS=1 ./run_and_terminate.sh
 ```
-1. It returns at once with `Running detached (pid N)`. `tail -f results/lambda_bench_runs/fullrun2000.pipeline.log` must show `Will terminate instance <id>`.
+1. It returns at once with `Running detached (pid N)`. `tail -f results/lambda_bench_runs/fullrun2000b.pipeline.log` must show `Will terminate instance <id>`.
 2. `watch -n 30 ./progress.sh` (in tmux if you like) and check that samples count up.
 3. Close SSH whenever you want; the run doesn't depend on it.
 4. When the ETA has passed, check the Lambda console. If the instance is still there, terminate it by hand and read `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`.
@@ -423,7 +423,8 @@ Every line starting with `[TIMING] ` is a flushed JSON object with an ISO `ts`:
 
 | `event` | When | Fields |
 |---|---|---|
-| `phase` | model load (per model), finalize | `name`, `model` or `run_label`, `seconds` |
+| `phase` | startup (dataset, IR, pool), model load (per model), resume skip, finalize | `name`, `seconds`; `model` on model load, `run_label` on finalize, `checkpoint_idx` and `samples_skipped` on resume skip |
+| `run_config` | once, after the model loads | `config` (every `Config` field except the bucket, plus thread caps and `SAMPLE_IDS`), `versions` (python, torch, transformers, datasets, jiwer, numpy), `gpu` |
 | `prep` | once per sample, printed by the worker | `sample_idx`, `n_items`, `t_prep_s` |
 | `sample` | once per sample per model | `model`, `sample_idx`, `n_items`, `audio_s`, `t_infer_s`, `t_score_s`, `t_wait_s`, `group_size`. With `SAMPLES_PER_CALL` > 1, `t_infer_s` is the call time split by clip count, and `t_wait_s` is charged to the first sample of each group (0 for the others). `t_wait_s` is the same on every model's record |
 | `checkpoint` | each checkpoint save | `checkpoint_idx`, `seconds` (save time), `t_fetch_s` (time to pull that checkpoint's rows from the stream) |

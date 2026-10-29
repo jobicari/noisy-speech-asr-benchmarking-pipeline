@@ -1,0 +1,14 @@
+.git
+.idea
+.DS_Store
+
+# Secrets — never enter the build context, mounted at runtime instead
+.env
+.envrc
+*key.json
+
+# Local-only artifacts, not needed in the image
+data/
+results/
+notebooks/
+tests/

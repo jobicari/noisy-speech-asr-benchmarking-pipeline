@@ -1,0 +1,15 @@
+# Linux/CUDA requirements for the Docker image, translated from environment.yml.
+# Excludes macOS-only packages (mlx, mlx-whisper) and dev/notebook tooling
+# (jupyter, jupyterlab, ipykernel, gradio, modal, mlflow, torchcodec) that
+# app.py's run path does not import.
+
+numpy
+pandas
+librosa
+soundfile
+scipy
+jiwer
+transformers
+datasets
+python-dotenv
+google-cloud-storage

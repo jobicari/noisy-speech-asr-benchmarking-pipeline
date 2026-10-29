@@ -87,6 +87,6 @@ The whole-run totals combine attempt 1's measured 2,222 s with the resume's ~12,
 7. **The result pickle has one copy**, on the Mac.
 8. `analyze.py` quirks found while writing these reports (wrong `n_samples`, failed runs left out of `summary.csv`, inconsistent projection targets) and an out-of-date `bench/TIMING_SPEC.md` are listed in `timing.md`. The `n_samples` fix is on `run/full-rerun-readiness`.
 
-## Sources not found
+## Removed claims
 
-`timing.md` originally pointed to `fullrun2000_first_look.md` for the result counts and a mean WER of 5.9 (turbo) vs 5.3 (large-v3). That file is not in the repository or in Jo's checkout, so those mean WER figures are not verified. The references now point to `results.md`, whose corpus WER figures are 5.68 and 5.16.
+The original timing report cited a file `fullrun2000_first_look.md` for the result row counts and for a mean WER of 5.9 (turbo) vs 5.3 (large-v3). That file does not exist: it is not in the repository, its git history, Jo's checkout or elsewhere on the Mac, and Jo has never seen it. The mean WER figures had no source and were removed from `timing.md`. The turbo vs large-v3 comparison there now uses the corpus WER from `results.md` (5.68 vs 5.16), and the row count reference points to `results.md`, which checks the 308,000 rows directly.

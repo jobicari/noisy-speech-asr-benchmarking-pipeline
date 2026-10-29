@@ -27,9 +27,9 @@ dependencies:
       - mlflow>=2.15.0
       - mlx
       - mlx-whisper
-      - torch
-      - torchaudio
-      - torchcodec
+      - torch==2.14.1
+      - torchaudio==2.11.0
+      - torchcodec==0.17.0
       - transformers
       - datasets
       - jiwer

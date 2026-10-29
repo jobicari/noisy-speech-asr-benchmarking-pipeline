@@ -240,12 +240,20 @@ Notes:
 git clone -b main https://github.com/<your-github-user>/noisy-speech-asr-benchmarking-pipeline.git
 cd noisy-speech-asr-benchmarking-pipeline
 ```
-`.env.docker` is created on the Mac from the tracked template (`cp .env.docker.example .env.docker`, then fill in the HF token and bucket). From the Mac, copy the secrets (they are gitignored):
+`.env.docker` is created on the Mac from the tracked template (`cp .env.docker.example .env.docker`, then fill in the HF token and bucket). Clone the repo on the instance first: `.env.docker` goes into the repo folder there, next to `run_and_terminate.sh`. Without it every run fails at once with `exit=125` and `open .../.env.docker: no such file or directory`. From the repo folder on the Mac, copy the secrets (they are gitignored):
 ```bash
-scp -i ~/.ssh/lambda_key .env.docker ubuntu@<ip>:~/noisy-speech-asr-benchmarking-pipeline/
+scp -i ~/.ssh/lambda_key .env.docker ubuntu@<ip>:~/noisy-speech-asr-benchmarking-pipeline/.env.docker
+ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 600 ~/noisy-speech-asr-benchmarking-pipeline/.env.docker
 scp -i ~/.ssh/lambda_key /path/to/your/gcs-key.json ubuntu@<ip>:~/gcs-key.json
 ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 644 ~/gcs-key.json   # container user has a different UID
 ```
+If a secret lives in 1Password, pipe it over ssh instead, so it never lands on the Mac's disk (`scp` can't read from a pipe). Quote the reference: item and field names may contain spaces. With a host alias from `~/.ssh/config`, drop `-i` and `ubuntu@<ip>`:
+```bash
+op read -n "op://<vault>/<item>/<field>" | ssh <host-alias> 'umask 077; cat > ~/noisy-speech-asr-benchmarking-pipeline/.env.docker'
+op read "op://<vault>/<item>/<file>.json" | ssh <host-alias> 'umask 077; cat > ~/gcs-key.json && chmod 644 ~/gcs-key.json'
+op read -n "op://<vault>/<item>/<field>" | ssh <host-alias> 'umask 077; cat > ~/lambda-api-key'
+```
+`umask 077` makes the file private from the moment it is created; only the GCS key is then opened to `644`. For a 1Password Document item, use `op document get "<item name>" --vault <vault>` in place of `op read`, which only takes `op://` references.
 
 Where the scripts expect each file on the instance (these are the defaults):
 

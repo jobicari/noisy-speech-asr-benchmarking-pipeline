@@ -1,6 +1,6 @@
 # v2 (fullrun2000b) readiness review
 
-Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. Reviewed: `app.py`, `src/`, `run_sweep.sh`, `run_and_terminate.sh`, `progress.sh`, `analyze.py`, `find_long_ids.py`, `upload_results.py`, `Dockerfile`, README. Nothing was run on a GPU or in a container. `exploration` has the same code as `main` (it differs only in the notebook).
+Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. Reviewed: `app.py`, `src/`, `run_sweep.sh`, `run_and_terminate.sh`, `progress.sh`, `analyze.py`, `find_long_ids.py`, `upload_results.py`, `Dockerfile`, README. Nothing was run on a GPU or in a container. Updated 2026-10-29 after Jo's decisions A to D. `exploration` has the same code as `main` (it differs only in the notebook).
 
 ## Commits
 
@@ -9,6 +9,10 @@ Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. R
 | 62d933c | `phase` records for `startup` (dataset, IR, pool) and `resume_skip` (fast-forward on resume), and a `run_config` record (every Config field except the bucket, thread caps, `SAMPLE_IDS`, library versions, GPU name) | Startup and the resume fast-forward were counted as unexplained overhead. The effective settings of a run were not logged anywhere, only inferable from the command line |
 | 33edd4a | `analyze.py` counts distinct samples in `n_samples` | It counted one record per model (2,212 instead of 316 for attempt 1) |
 | 8549708 | `sweep.json` records the git commit, a dirty flag and the image id | The image has no `.git`, so a sweep could not be traced back to its code |
+| b61fabc | ntfy alert when no run log has grown for `STALL_MIN` minutes (default 30), alert only | Decision B |
+| c11ce29 | `copy_results.py`: after the upload, each run's results pickle is copied inside GCS to `lambda_bench_runs/<sweep>/<run_id>/` and its size verified | Decision C |
+| 4deb5fa | `CLIPS` (run only listed sample/corruption pairs) and `WHISPER_FALLBACK` (OpenAI-style temperature fallback) | Decision A, the looped-clip side run |
+| e3c43ff | `find_loop_clips.py` and the `<SWEEP_ID>_loops` side run in `run_and_terminate.sh`, README docs and a smoke test | Decision A |
 | 0e87f67 | README: clone `main` (not `exploration`), use `fullrun2000b` as `SWEEP_ID` and `RUN_POSTFIX`, update the estimate to ~4 h / $5.20, document the new records | Reusing `fullrun2000` would overwrite the first run's GCS logs, and the same label could resume from or load stale results |
 
 `run_config` only reads the GPU name if torch is already loaded, because importing torch next to MLX aborts on macOS (two OpenMP runtimes). I checked that on the Mac.
@@ -25,11 +29,13 @@ Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. R
 | 6 | No link from a sweep to its code | Fixed (8549708) |
 | 7 | Run label reuse: a cached result or stale checkpoint with the same label is loaded or resumed silently, and the guard still reports success | Avoided by the new label in the README. `progress.sh` flags a cache load |
 | 8 | VRAM peak 21.8 of 23 GB | Not changed. The same data and seed passed all 2000 samples, so it should pass again, but any change (an eighth model, a bigger batch) needs a smoke test first |
-| 9 | A hang (e.g. a killed prep worker blocks `Pool.imap` forever, or a stuck GCS call) runs up the bill with no alert | Open, needs a decision (B below) |
-| 10 | The final results pickle lives only in `transcribe_cache/` on GCS; the sweep upload holds logs only. That folder is empty now, and the Mac has the only copy | Open, needs a decision (C below) |
-| 11 | Earlier sweep folders (`worker_sweep_bs22`, `thread_caps`, `spc_sweep1`, `models7_*`) are gone; only `bs_sweep1` remains | Can't be fixed in code. Their numbers survive in the README tables only |
+| 9 | A hang (e.g. a killed prep worker blocks `Pool.imap` forever, or a stuck GCS call) runs up the bill with no alert | Fixed (b61fabc) |
+| 10 | The final results pickle lives only in `transcribe_cache/` on GCS; the sweep upload holds logs only. That folder is empty now, and the Mac has the only copy | Fixed (c11ce29) |
+| 11 | Earlier sweep folders (`worker_sweep_bs22`, `thread_caps`, `spc_sweep1`, `models7_*`) are gone; only `bs_sweep1` remains | `bs_sweep1` uploaded by Jo (45 files, verified). The rest survive only as README tables |
 | 12 | Hub streaming error mid-run crashes the run | Accepted: the resume path handles it |
 | 13 | `evaluation.run_framework_speed_comparison` calls `load_transcriber_engine` with an old signature and is broken | Not on the run path: nothing in `app.py`, `src/` or the scripts imports `evaluation.py`, and the `RUN_FRAMEWORK_SPEED_COMPARISON_TEST` flag is read by nothing. Left for a separate fix |
+| 14 | `requirements-docker.txt` pins nothing, so rebuilding the image pulls the newest torch, transformers and datasets. The rerun may not use the libraries of fullrun2000 (which were never recorded), and a breaking release would only show at build or run time | Open, needs a decision (E below). `run_config.versions` now records what a run used |
+| 15 | The looped-clip side run's decoding (`WHISPER_FALLBACK`) is untested: torch aborts on import on the Mac (two OpenMP runtimes, in both conda envs), even on `main`. `CLIPS`, the prep filter, `find_loop_clips.py` and the shell helpers were tested on the Mac | Run the loop smoke test in the README on the instance before the full run |
 
 ## Repetition loops (tiny and base over 300% WER on BL_500_1000)
 
@@ -49,14 +55,11 @@ On `BL_500_1000` alone, capping takes tiny from 337% to 98% and base from 346% t
 
 The pipeline decodes greedily with no temperature fallback or compression-ratio check, which is the Hugging Face default but not what OpenAI's reference `transcribe()` does. That is why small models loop freely.
 
-## Decisions for Jo
+## Decisions
 
-Status on 2026-10-29: A is decided (option 1, plus a second pass on the looping clips with temperature fallback). B, C and D are still open. See `v2_plan.md`.
-
-- **A. Repetition loops.** (1, recommended) Keep decoding as is, so the rerun is comparable with fullrun2000, and report a loop flag and capped WER next to corpus WER in the analysis. (2) Turn on OpenAI-style temperature fallback with a compression-ratio threshold before the rerun. It describes real Whisper use better, but it changes every Whisper number and slows the looping models.
-- **B. Stall alert (recommended).** A background check in `run_and_terminate.sh` that sends an ntfy alert if no container log line has appeared for 30 minutes. Alert only, no kill.
-- **C. Keep the results with the logs (recommended).** After the main sweep, copy the final results pickle into the sweep's GCS folder, so results and timing live together and survive a cleanup of `transcribe_cache/`.
-- **D. Earlier sweeps.** Upload the Mac's `bs_sweep1` folder to GCS (only `bs_sweep1` still exists). Rerunning the short sweeps would need a GPU instance.
+- **A. Repetition loops: decided.** The main run keeps greedy decoding. A side run afterwards reruns only the looped clips with temperature fallback, so both transcripts exist. Analysis reports capped WER next to corpus WER. A clip counts as looped when its Whisper transcript compresses more than 2.4x with zlib (OpenAI's test). On fullrun2000 that is 1,235 transcripts, 1,077 clips in 959 samples; it catches 859 of the 862 runaway rows plus digit loops such as "000000..." that the normalizer squashes into one word.
+- **B, C: done** (b61fabc, c11ce29). **D: done** by Jo.
+- **E. Pin the libraries (open, recommended).** Build the image once, run the smoke tests, then pin the exact versions it installed in `requirements-docker.txt` and the Dockerfile, so a later rebuild gives the same code.
 
 ## What has to be true for the rerun to be trusted
 
@@ -69,3 +72,4 @@ Status on 2026-10-29: A is decided (option 1, plus a second pass on the looping 
 7. `run_config` shows `BATCH_SIZE=22`, `N_PREP_WORKERS=4`, `SAMPLES_PER_CALL=1`, `WHISPER_LONGFORM=chunked`, thread caps 2, the 7 models and the A10.
 8. WER on `none` within a few tenths of fullrun2000's (same seed and data). A larger gap means a library or code change, which `run_config.versions` will show.
 9. Long-clip side run: 8 samples, 6 Whisper models, `side=1` in the final log line.
+10. Looped-clip side run: the loop smoke test passed first; on the full run `loops=1`, its `run_config` shows `WHISPER_FALLBACK: true`, and each run has a `VERIFIED copy` line for its results.

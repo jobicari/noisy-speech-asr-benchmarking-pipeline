@@ -4,6 +4,8 @@ Source: `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_loops/` and `fu
 
 Setup: 2000 LibriSpeech test-clean samples x 22 corruptions x 7 models, `SEED=123`, greedy decoding, `WHISPER_LONGFORM=chunked`, image built from `main` at `5fe7566` (transformers 5.19.0, torch 2.14.1+cu126). WER is corpus WER: all substitutions, deletions and insertions over all reference words, after Whisper's English normalizer on both sides.
 
+Greedy decoding means the decoder takes the single most likely token (the argmax) at every step, with no sampling and no beam search (`num_beams=1`, `do_sample=False`, the Hugging Face default). OpenAI's Python `transcribe()` is also greedy at temperature 0. The `whisper` command-line tool defaults to beam search with 5 beams, so figures produced with the CLI can differ slightly.
+
 ## 1. Data check
 
 - **Complete**: 308,000 rows, exactly one per (sample, model, corruption). 2000 samples, 22 corruptions, 7 models. `duration_s` is present on every row (v1 lacked it on 46,200 rows).

@@ -22,7 +22,7 @@ import statistics
 from datetime import datetime
 from pathlib import Path
 
-M1_BASELINE_S_PER_INF = 0.98  # M1 Pro full run, from HANDOFF.md
+M1_BASELINE_S_PER_INF = 0.98  # seconds per inference of a full run on an Apple M1 Pro (MLX)
 
 
 def pct(values, p):

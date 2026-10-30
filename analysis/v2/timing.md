@@ -1,6 +1,6 @@
 # v2 (fullrun2000b): timing and throughput
 
-Source: the `[TIMING]` records, `run.json`, `gpu.csv` and `cpu.csv` in `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_longform/` and `fullrun2000b_loops/` on Jo's Mac, plus v1's attempt 1 in `fullrun2000/`. Every number comes from [`timing.py`](timing.py). Computed 2026-10-30.
+Source: the `[TIMING]` records, `run.json`, `gpu.csv` and `cpu.csv` in `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_longform/` and `fullrun2000b_loops/` (local copies of the GCS folders), plus v1's attempt 1 in `fullrun2000/`. Every number comes from [`timing.py`](timing.py). Computed 2026-10-30.
 
 Config: one NVIDIA A10 (22 GiB usable) on Lambda at $1.29/h, 30 host CPUs, `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, fp16, HF backend. Image and checkout are both `main` at `5fe7566`, transformers 5.19.0, torch 2.14.1+cu126.
 

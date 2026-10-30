@@ -1,6 +1,6 @@
 # v1 (fullrun2000): timing and throughput
 
-Source: `results/lambda_bench_runs/fullrun2000/`, `fullrun2000_finish/` and `fullrun2000_finish_longform/` on Jo's Mac (same three folders as in GCS), read with the `[TIMING]` records described in `bench/TIMING_SPEC.md`. Computed 2026-10-29. Config for all of it: A10 24 GB, $1.29/h, `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, HF backend, fp16.
+Source: `results/lambda_bench_runs/fullrun2000/`, `fullrun2000_finish/` and `fullrun2000_finish_longform/` (local copies of the three GCS folders), read with the `[TIMING]` records described in `bench/TIMING_SPEC.md`. Computed 2026-10-29. Config for all of it: A10 24 GB, $1.29/h, `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, HF backend, fp16.
 
 ## Data check
 - **Results are complete**: 308,000 rows in `fullRun__hf__986ea79c__2000samples__fullrun2000.pkl` (see `results.md`), plus 1,056 rows in the long-clip side run.
@@ -13,7 +13,7 @@ Source: `results/lambda_bench_runs/fullrun2000/`, `fullrun2000_finish/` and `ful
 | `fullrun2000_finish` | 10-15 05:41 | re-ran the guard; loaded the finished pickle from cache, no inference | 27 s | phases only | $0.01 |
 | `fullrun2000_finish_longform` | 10-15 05:42-05:46 | 8 long samples × 6 Whisper models, `WHISPER_LONGFORM=sequential` | 231 s | yes | $0.08 |
 
-So the per-model and per-sample numbers below come from the first 316 samples only (16 % of the run). The resume wall time and rate come from the chat on 2026-10-15, not from files.
+So the per-model and per-sample numbers below come from the first 316 samples only (16 % of the run). The resume wall time and rate come from notes taken during the run on 2026-10-15, not from log files.
 
 ## Whole run
 - **~4.0 h of container time, ~$5.20** (instance setup and idle time not included).
@@ -55,10 +55,10 @@ So the per-model and per-sample numbers below come from the first 316 samples on
 - **wav2vec2 (CTC, no decoder) is 10× faster than large-v3** and only 3 % of the run.
 
 ## Long-clip side run (sequential long-form)
-8 samples × 22 × 6 models = 1,056 inferences in 231 s (186 s inference). 4.9 inf/s and 158 audio s/s; these are 30-35 s clips decoded in 30 s windows with timestamps, so inf/s isn't comparable with the main run. Per model, large-v3 took 6.7 s per sample (p50), turbo 3.7 s. 95 "did not predict an ending timestamp" warnings, harmless as noted in handoff 5. The first sample waited 10 s for prep, since only 8 samples were prepped.
+8 samples × 22 × 6 models = 1,056 inferences in 231 s (186 s inference). 4.9 inf/s and 158 audio s/s; these are 30-35 s clips decoded in 30 s windows with timestamps, so inf/s isn't comparable with the main run. Per model, large-v3 took 6.7 s per sample (p50), turbo 3.7 s. 95 "did not predict an ending timestamp" warnings, harmless (Whisper's sequential decoding logs it when a window ends mid-word). The first sample waited 10 s for prep, since only 8 samples were prepped.
 
 ## Against earlier sweeps
-Only `bs_sweep1` is still on disk or in GCS. The other sweep folders (`worker_sweep_bs22`, `thread_caps`, `spc_sweep1`, `models7_*`) are gone from both, so these use the numbers in `MEMO.local.md`.
+Only `bs_sweep1` is still on disk or in GCS. The other sweep folders (`worker_sweep_bs22`, `thread_caps`, `spc_sweep1`, `models7_*`) are gone from both, so these use the numbers recorded in the README.
 
 | Sweep | Setting | Result | Full run |
 |---|---|---|---|
@@ -74,13 +74,13 @@ The 6 % gap to `models7_100` is plausibly the different sample mix (longer clips
 1. **84 % of the run has no timing data** (the deleted `fullrun2000_resume`). Fixed for future runs by `2591359` on `main` (`7a1b150` on `exploration`) (detached runs, `run.json` guard), but this run's per-sample timing for samples 301-2000 can't be recovered.
 2. **VRAM peak 21.8 of 23.0 GB (95 %)** with all 7 models loaded at batch 22. A larger batch, an eighth model, or a longer clip could hit out-of-memory.
 3. **`analyze.py` quirks in these reports**:
-   - `n_samples` is 2,212 for attempt 1; that's sample records (316 × 7), not samples (known open item from handoff 5).
+   - `n_samples` is 2,212 for attempt 1; that's sample records (316 × 7), not samples (since fixed in `analyze.py`).
    - A failed run (exit 1) is left out of `summary.csv` and `report.md`, so the `fullrun2000` report shows only dashes even though `runs.csv` has all its numbers.
    - `fullrun2000_finish` reports "projection for 44,000 inferences", and `fullrun2000` uses 308,000. The target isn't consistent across sweeps of the same run.
-   - `analyze.py --combine` (handoff 5, next step 2) can't produce the total because the resume folder is gone. The totals above are by hand.
+   - `analyze.py --combine` can't produce the total because the resume folder is gone. The totals above are by hand.
 4. **`bench/TIMING_SPEC.md` is out of date with the code.** `sample` records no longer carry `t_prep_s`; prep is its own `prep` event (one per sample, from the workers), and `sample` adds `t_wait_s`, `group_size` and `ts`. `checkpoint` records carry `checkpoint_idx` and `t_fetch_s` but no `model`. There is also a `finalize` phase.
 5. The local pickle is named `...2000samples__fullrun2000.pkl`, but the run label in the logs is `...2000samples__fullrun2000_SAMPLES_PER_CALL_1_r1`. It was renamed after download. That only matters if a script looks it up by label.
-6. GCS `transcribe_cache/` is now empty (including `checkpoint/`), so the Mac copy of the two pickles is the only one.
+6. GCS `transcribe_cache/` is now empty (including `checkpoint/`), so a local download of the two pickles is the only copy.
 
 ## What would make a full comparison possible
 - The full run used a single config, so it can't compare hyperparameters by itself. Comparing configs needs the earlier sweep folders back, or a re-run of a short sweep.

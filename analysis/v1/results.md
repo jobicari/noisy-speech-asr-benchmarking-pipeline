@@ -3,7 +3,7 @@
 2000 LibriSpeech samples, 22 corruption types (including `none`), 7 models (6 Whisper sizes on HF + wav2vec2-large-960h-lv60-self), NVIDIA A10 on Lambda ($1.29/h).
 
 Sources:
-- Results: `results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000.pkl` (same file as `gs://asr-pipeline-benchmark-storage/results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000_SAMPLES_PER_CALL_1_r1.pkl`, uploaded 2026-10-15 05:31 UTC).
+- Results: `results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000.pkl` (same file as `gs://<bucket>/results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000_SAMPLES_PER_CALL_1_r1.pkl`, uploaded 2026-10-15 05:31 UTC).
 - Long-clip side run: `fullRun__hf__a9498565__8samples__fullrun2000_finish_longform.pkl`.
 - Timing: `results/lambda_bench_runs/fullrun2000`, `fullrun2000_finish`, `fullrun2000_finish_longform`.
 

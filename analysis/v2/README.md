@@ -16,7 +16,7 @@ Details live next to this file:
 | Looped-clip pass | the 1,077 clips where a Whisper model looped, 6 Whisper models, temperature fallback | 47 min | $1.02 |
 | **Total** with finders, uploads and terminate | | **about 5.3 h** | **about $6.85** |
 
-Same settings as v1 (`SEED=123`, `BATCH_SIZE=22`, 4 prep workers, thread caps 2, fp16, chunked long-form), with library versions pinned to v1's (transformers 5.19.0, torch 2.14.1+cu126). Results and logs are in GCS under `lambda_bench_runs/fullrun2000b{,_longform,_loops}/`, each run's results pickle next to its logs, and in `results/lambda_bench_runs/` on Jo's Mac.
+Same settings as v1 (`SEED=123`, `BATCH_SIZE=22`, 4 prep workers, thread caps 2, fp16, chunked long-form), with library versions pinned to v1's (transformers 5.19.0, torch 2.14.1+cu126). Results and logs are in GCS under `lambda_bench_runs/fullrun2000b{,_longform,_loops}/`, each run's results pickle next to its logs, and downloaded locally to `results/lambda_bench_runs/` for this analysis.
 
 ## Main findings
 

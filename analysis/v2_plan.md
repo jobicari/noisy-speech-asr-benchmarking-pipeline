@@ -37,7 +37,7 @@ Implemented (4deb5fa, e3c43ff), not yet run on a GPU. After the main pass, `run_
 2. Reruns those (sample, corruption) clips on all 6 Whisper models with `WHISPER_FALLBACK=True`: OpenAI `transcribe()` defaults, temperatures 0 to 1 in steps of 0.2, compression ratio 1.35 in token space (2.4 on text), log-prob -1.0, seeded from `SEED`. Same audio as the main pass (corruptions are seeded per sample), same chunked long-form handling, `SAMPLES_PER_CALL=20` to batch the clips.
 3. Writes a separate sweep `<SWEEP_ID>_loops` with its own run label and results pickle, so the main pickle stays a clean v1 comparison. Both transcripts of each looped clip can then be compared.
 
-Not tested yet: the fallback decoding itself, because torch aborts on import on Jo's Mac. The README has a loop smoke test (`smoke_loops`) to run on the instance before the full run.
+Not tested yet: the fallback decoding itself, because torch could not be imported on the local development machine (two OpenMP runtimes). The README has a loop smoke test (`smoke_loops`) to run on the instance before the full run.
 
 ## Decisions
 
@@ -46,7 +46,7 @@ Not tested yet: the fallback decoding itself, because torch aborts on import on 
 | A | Main decode unchanged; capped WER in the analysis; second pass on looping clips with fallback | Decided, implemented (see above) |
 | B | Stall alert in `run_and_terminate.sh` | Done (b61fabc) |
 | C | Copy each run's results pickle next to its logs in GCS | Done (c11ce29) |
-| D | Upload `bs_sweep1` from the Mac | Done by Jo, 45 files verified in `lambda_bench_runs/bs_sweep1/` |
+| D | Upload the only surviving earlier sweep, `bs_sweep1`, to GCS | Done, 45 files verified in `lambda_bench_runs/bs_sweep1/` |
 | E | Pin library versions. v1's versions were never recorded | Done (ede9a4e): torch 2.14.1, torchaudio 2.11.0, torchcodec 0.17.0 (cu126) in the Dockerfile, 88 more in `constraints-docker.txt`, resolved for linux x86_64 / Python 3.12 on 2026-10-29. Confirmed only once the image builds and the smoke tests pass |
 | - | Run label `fullrun2000b` for `SWEEP_ID` and `RUN_POSTFIX` | In the README on the readiness branch |
 

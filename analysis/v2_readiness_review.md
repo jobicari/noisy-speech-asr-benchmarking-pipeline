@@ -1,6 +1,6 @@
 # v2 (fullrun2000b) readiness review
 
-Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. Reviewed: `app.py`, `src/`, `run_sweep.sh`, `run_and_terminate.sh`, `progress.sh`, `analyze.py`, `find_long_ids.py`, `upload_results.py`, `Dockerfile`, README. Nothing was run on a GPU or in a container. Updated 2026-10-29 after Jo's decisions A to D. `exploration` has the same code as `main` (it differs only in the notebook).
+Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), since merged into `main`. Reviewed: `app.py`, `src/`, `run_sweep.sh`, `run_and_terminate.sh`, `progress.sh`, `analyze.py`, `find_long_ids.py`, `upload_results.py`, `Dockerfile`, README. Nothing was run on a GPU or in a container. Updated 2026-10-29 after decisions A to D. `exploration` has the same code as `main` (it differs only in the notebook).
 
 ## Commits
 
@@ -15,7 +15,7 @@ Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. R
 | e3c43ff | `find_loop_clips.py` and the `<SWEEP_ID>_loops` side run in `run_and_terminate.sh`, README docs and a smoke test | Decision A |
 | 0e87f67 | README: clone `main` (not `exploration`), use `fullrun2000b` as `SWEEP_ID` and `RUN_POSTFIX`, update the estimate to ~4 h / $5.20, document the new records | Reusing `fullrun2000` would overwrite the first run's GCS logs, and the same label could resume from or load stale results |
 
-`run_config` only reads the GPU name if torch is already loaded, because importing torch next to MLX aborts on macOS (two OpenMP runtimes). I checked that on the Mac.
+`run_config` only reads the GPU name if torch is already loaded, because importing torch next to MLX aborts on macOS (two OpenMP runtimes); this was checked on macOS.
 
 ## Failure risks and gaps
 
@@ -30,12 +30,12 @@ Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no PR yet. R
 | 7 | Run label reuse: a cached result or stale checkpoint with the same label is loaded or resumed silently, and the guard still reports success | Avoided by the new label in the README. `progress.sh` flags a cache load |
 | 8 | VRAM peak 21.8 of 23 GB | Not changed. The same data and seed passed all 2000 samples, so it should pass again, but any change (an eighth model, a bigger batch) needs a smoke test first |
 | 9 | A hang (e.g. a killed prep worker blocks `Pool.imap` forever, or a stuck GCS call) runs up the bill with no alert | Fixed (b61fabc) |
-| 10 | The final results pickle lives only in `transcribe_cache/` on GCS; the sweep upload holds logs only. That folder is empty now, and the Mac has the only copy | Fixed (c11ce29) |
-| 11 | Earlier sweep folders (`worker_sweep_bs22`, `thread_caps`, `spc_sweep1`, `models7_*`) are gone; only `bs_sweep1` remains | `bs_sweep1` uploaded by Jo (45 files, verified). The rest survive only as README tables |
+| 10 | The final results pickle lives only in `transcribe_cache/` on GCS; the sweep upload holds logs only. That folder is empty now, so the only copy is a local download | Fixed (c11ce29) |
+| 11 | Earlier sweep folders (`worker_sweep_bs22`, `thread_caps`, `spc_sweep1`, `models7_*`) are gone; only `bs_sweep1` remains | `bs_sweep1` uploaded to GCS (45 files, verified). The rest survive only as README tables |
 | 12 | Hub streaming error mid-run crashes the run | Accepted: the resume path handles it |
 | 13 | `evaluation.run_framework_speed_comparison` calls `load_transcriber_engine` with an old signature and is broken | Not on the run path: nothing in `app.py`, `src/` or the scripts imports `evaluation.py`, and the `RUN_FRAMEWORK_SPEED_COMPARISON_TEST` flag is read by nothing. Left for a separate fix |
 | 14 | `requirements-docker.txt` pins nothing, so rebuilding the image pulls the newest torch, transformers and datasets. The rerun may not use the libraries of fullrun2000 (which were never recorded), and a breaking release would only show at build or run time | Open, needs a decision (E below). `run_config.versions` now records what a run used |
-| 15 | The looped-clip side run's decoding (`WHISPER_FALLBACK`) is untested: torch aborts on import on the Mac (two OpenMP runtimes, in both conda envs), even on `main`. `CLIPS`, the prep filter, `find_loop_clips.py` and the shell helpers were tested on the Mac | Run the loop smoke test in the README on the instance before the full run |
+| 15 | The looped-clip side run's decoding (`WHISPER_FALLBACK`) is untested: torch aborts on import on the local development machine (two OpenMP runtimes), even on `main`. `CLIPS`, the prep filter, `find_loop_clips.py` and the shell helpers were tested locally | Run the loop smoke test in the README on the instance before the full run |
 
 ## Repetition loops (tiny and base over 300% WER on BL_500_1000)
 
@@ -58,7 +58,7 @@ The pipeline decodes greedily with no temperature fallback or compression-ratio 
 ## Decisions
 
 - **A. Repetition loops: decided.** The main run keeps greedy decoding. A side run afterwards reruns only the looped clips with temperature fallback, so both transcripts exist. Analysis reports capped WER next to corpus WER. A clip counts as looped when its Whisper transcript compresses more than 2.4x with zlib (OpenAI's test). On fullrun2000 that is 1,235 transcripts, 1,077 clips in 959 samples; it catches 859 of the 862 runaway rows plus digit loops such as "000000..." that the normalizer squashes into one word.
-- **B, C: done** (b61fabc, c11ce29). **D: done** by Jo.
+- **B, C: done** (b61fabc, c11ce29). **D: done.**
 - **E. Pin the libraries (open, recommended).** Build the image once, run the smoke tests, then pin the exact versions it installed in `requirements-docker.txt` and the Dockerfile, so a later rebuild gives the same code.
 
 ## What has to be true for the rerun to be trusted

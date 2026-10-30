@@ -1,6 +1,6 @@
 # v2 (fullrun2000b): results
 
-Source: `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_loops/` and `fullrun2000b_longform/` on Jo's Mac (downloaded from GCS on 2026-10-30), compared with the v1 pickles in `results/transcribe_cache/`. Every number below comes from [`results.py`](results.py) (run it from the repo root with the project env). Computed 2026-10-30.
+Source: `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_loops/` and `fullrun2000b_longform/` (downloaded from GCS on 2026-10-30), compared with the v1 pickles in `results/transcribe_cache/`. Every number below comes from [`results.py`](results.py) (run it from the repo root with the project env). Computed 2026-10-30.
 
 Setup: 2000 LibriSpeech test-clean samples x 22 corruptions x 7 models, `SEED=123`, greedy decoding, `WHISPER_LONGFORM=chunked`, image built from `main` at `5fe7566` (transformers 5.19.0, torch 2.14.1+cu126). WER is corpus WER: all substitutions, deletions and insertions over all reference words, after Whisper's English normalizer on both sides.
 

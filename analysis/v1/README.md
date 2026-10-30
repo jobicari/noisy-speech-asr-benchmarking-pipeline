@@ -1,6 +1,6 @@
 # v1: the first full run (`fullrun2000`)
 
-v1 is the name for the first full benchmark run, labelled `fullrun2000` in the code, logs and GCS paths. It ran on 2026-10-14 and 2026-10-15. The next run, v2 (`fullrun2000b`), is planned in [`../v2_plan.md`](../v2_plan.md).
+v1 is the name for the first full benchmark run, labelled `fullrun2000` in the code, logs and GCS paths. It ran on 2026-10-14 and 2026-10-15. The next run, v2 (`fullrun2000b`), was planned in [`../v2_plan.md`](../v2_plan.md) and ran on 2026-10-29; see [`../v2/README.md`](../v2/README.md). v2's transcripts are identical to v1's.
 
 Details live in two files next to this one:
 

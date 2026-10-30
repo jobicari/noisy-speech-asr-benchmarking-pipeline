@@ -4,7 +4,7 @@ Benchmarks how robust speech-recognition models (the Whisper family, plus wav2ve
 
 It runs in two places:
 
-- **Apple Silicon Mac (M1 Pro):** MLX backend (`mlx-whisper`), for development and smoke tests.
+- **Apple Silicon workstation (development reference: M1 Pro, 32 GB):** MLX backend (`mlx-whisper`), for development and smoke tests.
 - **Lambda Labs A10 GPU:** Hugging Face Transformers backend on CUDA, inside Docker, for long runs. Results are stored in Google Cloud Storage.
 
 ---
@@ -90,7 +90,7 @@ Inference seconds per model (`models7_smoke`, 20 samples × 22 corruptions):
 ### Next
 1. Analyse the 2000-sample results: WER/CER per model × corruption, the size curve, and wav2vec2 vs Whisper.
 2. Optional speed work: profile one Whisper call, or run two models at once in separate processes (the GPU still has headroom).
-3. Later: build and push the image from CI instead of from the Mac.
+3. Later: build and push the image from CI instead of from a workstation.
 
 ### Model comparison
 The research question is how noise robustness scales with model size, with one model trained differently as a contrast:
@@ -188,7 +188,7 @@ Everything is set through environment variables. Locally they come from `.env` (
 
 ---
 
-## Running on the Mac (MLX)
+## Running on Apple Silicon (MLX)
 
 One-time setup:
 ```bash
@@ -223,7 +223,7 @@ Notes:
 - Use `python -u` (or `PYTHONUNBUFFERED=1`) when piping to `tee`. Otherwise plain `print` lines are buffered and show up out of order next to the flushed `[TIMING]` lines.
 - `tee file` overwrites and `tee -a file` appends. Use one log file per run.
 - Always pass `N_PREP_WORKERS` explicitly. `RUN_POSTFIX` is only a label and does not set anything.
-- On the M1 Pro (8 performance cores, 32 GB), 1 worker keeps up with inference. More workers compete with MLX for CPU and slow prep down.
+- On an M1 Pro (8 performance cores, 32 GB), 1 worker keeps up with inference. More workers compete with MLX for CPU and slow prep down.
 
 ---
 
@@ -240,14 +240,14 @@ Notes:
 git clone -b main https://github.com/<your-github-user>/noisy-speech-asr-benchmarking-pipeline.git
 cd noisy-speech-asr-benchmarking-pipeline
 ```
-`.env.docker` is created on the Mac from the tracked template (`cp .env.docker.example .env.docker`, then fill in the HF token and bucket). Clone the repo on the instance first: `.env.docker` goes into the repo folder there, next to `run_and_terminate.sh`. Without it every run fails at once with `exit=125` and `open .../.env.docker: no such file or directory`. From the repo folder on the Mac, copy the secrets (they are gitignored):
+`.env.docker` is created on the workstation from the tracked template (`cp .env.docker.example .env.docker`, then fill in the HF token and bucket). Clone the repo on the instance first: `.env.docker` goes into the repo folder there, next to `run_and_terminate.sh`. Without it every run fails at once with `exit=125` and `open .../.env.docker: no such file or directory`. From the repo folder on the workstation, copy the secrets (they are gitignored):
 ```bash
 scp -i ~/.ssh/lambda_key .env.docker ubuntu@<ip>:~/noisy-speech-asr-benchmarking-pipeline/.env.docker
 ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 600 ~/noisy-speech-asr-benchmarking-pipeline/.env.docker
 scp -i ~/.ssh/lambda_key /path/to/your/gcs-key.json ubuntu@<ip>:~/gcs-key.json
 ssh -i ~/.ssh/lambda_key ubuntu@<ip> chmod 644 ~/gcs-key.json   # container user has a different UID
 ```
-If a secret lives in 1Password, pipe it over ssh instead, so it never lands on the Mac's disk (`scp` can't read from a pipe). Quote the reference: item and field names may contain spaces. With a host alias from `~/.ssh/config`, drop `-i` and `ubuntu@<ip>`:
+If secrets are kept in a password manager with a command-line client (the examples use 1Password's `op`), pipe them over ssh instead, so they never land on the workstation's disk (`scp` can't read from a pipe). Quote the reference: item and field names may contain spaces. With a host alias from `~/.ssh/config`, drop `-i` and `ubuntu@<ip>`:
 ```bash
 op read -n "op://<vault>/<item>/<field>" | ssh <host-alias> 'umask 077; cat > ~/noisy-speech-asr-benchmarking-pipeline/.env.docker'
 op read "op://<vault>/<item>/<file>.json" | ssh <host-alias> 'umask 077; cat > ~/gcs-key.json && chmod 644 ~/gcs-key.json'
@@ -264,7 +264,7 @@ Where the scripts expect each file on the instance (these are the defaults):
 | `.env.docker` | `~/noisy-speech-asr-benchmarking-pipeline/.env.docker` (`ENV_FILE`) | |
 | HF model cache | `~/hf-cache` | `777` |
 
-Re-copy `.env.docker` whenever you change it on the Mac, for example after editing `HF_MODELS`. Pulling the repo doesn't update it.
+Re-copy `.env.docker` whenever you change it on the workstation, for example after editing `HF_MODELS`. Pulling the repo doesn't update it.
 
 Create a host folder for the Hugging Face model cache, once per instance:
 ```bash
@@ -276,7 +276,7 @@ The Dockerfile sets `HF_HOME=/app/.cache/huggingface`, but every `docker run` st
 
 The image is `python:3.12-slim` with CUDA torch from the `cu126` wheel index (all library versions pinned, see [Known gotchas](#known-gotchas)), ffmpeg and libsndfile, and runs as a non-root `app` user. `src/` and `app.py` are copied in, so the image must be rebuilt after every code change. Every command below uses the local tag `asr-benchmark:lambda` (the scripts' default `IMAGE`), whichever way you get the image.
 
-**Build on the Mac and push to Docker Hub** (once per code change). The Mac builds ARM by default, so ask for x86. Build from a clean checkout of the commit the instance will clone, and tag the image with that commit:
+**Build on a workstation and push to Docker Hub** (once per code change). On Apple Silicon, Docker builds ARM by default, so ask for x86. Build from a clean checkout of the commit the instance will clone, and tag the image with that commit:
 ```bash
 git status --porcelain              # must print nothing
 REV=$(git rev-parse HEAD)
@@ -295,14 +295,14 @@ docker pull <dockerhub-user>/asr-benchmark:${REV:0:7}
 docker tag <dockerhub-user>/asr-benchmark:${REV:0:7} asr-benchmark:lambda
 docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' asr-benchmark:lambda   # must print $REV
 ```
-If the pull fails with "not found", no image was pushed for that commit: push one from the Mac, or build on the instance.
+If the pull fails with "not found", no image was pushed for that commit: push one from the workstation, or build on the instance.
 
 **Or build on the instance** (no Docker Hub, about 10 minutes, and the same pinned versions):
 ```bash
 docker build --label org.opencontainers.image.revision=$(git rev-parse HEAD) -t asr-benchmark:lambda .
 ```
 
-Keep `asr-benchmark:local` (ARM, Mac) and `asr-benchmark:lambda` (x86) separate.
+Keep `asr-benchmark:local` (ARM, Apple Silicon) and `asr-benchmark:lambda` (x86) separate.
 
 ### 4. Single run
 ```bash
@@ -505,7 +505,7 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **Hang after "RUN COMPLETED SUCCESSFULLY":** caused by closing a partly consumed HF streaming iterator. Don't call `iterator.close()`. `app.py` ends with `os._exit(0)` on purpose. The `resource_tracker ... leaked semaphore` warning at exit is expected and harmless.
 - **Key file unreadable in the container:** the container user's UID differs from the host's, so use `chmod 644` on the host copy.
 - **`docker: permission denied`** on a fresh instance: add the user to the `docker` group and reconnect.
-- **Architecture:** Mac builds are ARM64 and Lambda is x86_64. Build on the instance, or use `--platform linux/amd64`.
+- **Architecture:** Apple Silicon builds are ARM64 and Lambda is x86_64. Build on the instance, or use `--platform linux/amd64`.
 - **Run label doesn't record code settings.** It hashes the model list but not `SAMPLES_PER_CALL`, the thread caps or the normalizer, so two runs that differ only in those share a label and the second loads the first one's results. Give each a different `RUN_POSTFIX`.
 - **The normalizer needs the Hub once:** `cleanup_pipeline` downloads `normalizer.json` from `openai/whisper-small` on first use in each process (cached afterwards).
 - **Stuck containers:** a container that hangs keeps running (and holding GPU memory) after the sweep moves on, and its run never reaches finalize, so its checkpoints stay in the bucket. Run `docker ps` before every sweep and `docker stop <name>` anything left over.
@@ -519,7 +519,7 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - **torchcodec's lazy `AudioDecoder`** can't be pickled, so samples are decoded in the main process (`_sample_decoder`) before going to the pool.
 
 ## Housekeeping
-- Personal notes with real values (bucket, paths, instance details) go in `MEMO.local.md`, which is gitignored (`*.local.md`).
+- Notes with real values (bucket, paths, instance details) belong in a `*.local.md` file, which is gitignored.
 - Revoke or rotate the GitHub PAT used for cloning when you're done with an instance.
 - Revoke the Lambda API key when you no longer run unattended jobs. It can terminate any of your instances.
 - `notebooks/tests-asr-pipeline.ipynb` still uses the old API.

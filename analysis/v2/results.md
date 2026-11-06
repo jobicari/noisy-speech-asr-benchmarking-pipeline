@@ -1,6 +1,6 @@
 # v2 (fullrun2000b): results
 
-Source: `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_loops/` and `fullrun2000b_longform/` (downloaded from GCS on 2026-10-30), compared with the v1 pickles in `results/transcribe_cache/`. Every number below comes from [`results.py`](results.py) (run it from the repo root with the project env). Computed 2026-10-30.
+Source: `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_loops/` and `fullrun2000b_longform/` (downloaded from GCS on 2026-10-30), compared with the v1 pickles in `results/transcribe_cache/`. Every number below comes from [`results.py`](results.py) (run it from the repo root with the project env). Computed 2026-10-30; four figures corrected on 2026-11-02 after rerunning the script (wav2vec2 degradation, best model per corruption, turbo's gap to large-v3, the audio-health flags).
 
 Setup: 2000 LibriSpeech test-clean samples x 22 corruptions x 7 models, `SEED=123`, greedy decoding, `WHISPER_LONGFORM=chunked`, image built from `main` at `5fe7566` (transformers 5.19.0, torch 2.14.1+cu126). WER is corpus WER: all substitutions, deletions and insertions over all reference words, after Whisper's English normalizer on both sides.
 
@@ -42,13 +42,13 @@ What this shows:
 | whisper-medium | 769M | 2.56 | 7.90 | 7.69 | 4.34 | 0.0 | 6 | 3.1x |
 | whisper-large-v3 | 1.55B | 1.76 | **5.16** | **5.08** | **2.74** | 0.0 | 1 | **2.9x** |
 | whisper-large-v3-turbo | 809M | 1.91 | 5.68 | 5.43 | 2.98 | 0.0 | 7 | 3.0x |
-| wav2vec2-large-lv60-self | 317M | **1.59** | 20.00 | 19.99 | 13.72 | 3.3 | 0 | 12.6x |
+| wav2vec2-large-lv60-self | 317M | **1.59** | 20.00 | 19.99 | 13.72 | 3.3 | 0 | 12.5x |
 
 - **Capped WER** limits each row's errors to its reference length, so a transcript that loops for 500 words counts as 100% wrong, not 1,700%. It changes tiny (42 to 27) and base (33 to 19) a lot, small a little, and the large models hardly at all.
 - **A row loops** when its transcript compresses more than 2.4x with zlib, the test OpenAI's Whisper uses to trigger its fallback. This catches more than v1's "insertions over 2x the reference" rule (671 against 435 rows for tiny), because it also catches loops of digits ("0000...") that the normalizer squashes into one word.
 - **Robustness grows with size, with one break**: base degrades more than tiny (7.1x against 6.1x), because insertions from loops are half of its errors. With capped WER the curve is flat from tiny to base (4.0x, 4.1x), then falls steadily: small 3.6x, medium 3.0x, large-v3 2.9x, turbo 2.8x.
-- **Turbo is within 0.5 points of large-v3 on 19 of 22 corruptions.** The exceptions are white noise (1.0 points), `BL_500_1000` (1.6) and the combined chain (4.4).
-- **wav2vec2 is best on clean audio but degrades 12.6x**, twice as much as any Whisper model.
+- **Turbo is within 0.5 points of large-v3 on 18 of 22 corruptions.** The exceptions are white noise (1.0 points), `BL_500_1000` (1.6), the combined chain (4.3) and heavy packet loss `PL_5_.5` (just over 0.5).
+- **wav2vec2 is best on clean audio but degrades 12.5x**, twice as much as any Whisper model.
 
 ### Error types (share of all word errors)
 
@@ -104,7 +104,7 @@ Capped WER for the corruptions where capping matters (the others change by less 
 | clipN_025 | 29.5 | 19.5 | 9.1 | 5.8 | 3.4 | 3.7 |
 
 Observations:
-- **large-v3 is the best model on 20 of 22 corruptions.** wav2vec2 wins the other two, clean audio and light packet loss (`PL_40_.1`), by 0.1-0.2 points.
+- **large-v3 is the best model on 19 of 22 corruptions.** wav2vec2 wins the other three, clean audio, the 8 kbps codec (`codec_8k`) and light packet loss (`PL_40_.1`), by 0.1-0.2 points.
 - **Most corruptions barely touch the large models**: 19 of 22 leave large-v3 at 3.5% or below. Only white noise (5.5%), the 500-1000 Hz band (33%) and the combined noise, reverb and dropout chain (26%) hurt it.
 - **Band limiting is the hardest family.** At 800-3000 Hz (roughly a phone line), small and up are fine. At 500-1000 Hz, which keeps almost no consonant information, every model fails, and tiny and base fall into loops on more than a quarter of the clips.
 - **Clipping**: normalised (`clipN_*`) and plain (`clip_*`) clipping give nearly the same WER at each threshold: within 1 point for tiny and base and within 0.7 for the rest. Peak normalisation before clipping barely matters.
@@ -130,7 +130,7 @@ Loop rows (zlib ratio > 2.4) by corruption, Whisper models only:
 
 - **92% of loops are on two corruptions**: the 500-1000 Hz band and the combined chain. On `BL_500_1000`, 27% of tiny's clips and 22% of base's loop.
 - **Loops almost vanish from medium up** (6, 1 and 7 rows out of 44,000 each). Turbo loops once on clean audio.
-- **Loops are expensive as well as wrong**: they cost 15% of all GPU time in v2 (see the timing doc).
+- **Loops are expensive as well as wrong**: they take 15% of all GPU time in v2 (see the timing doc).
 
 ## 6. The looped-clip pass: what temperature fallback does
 
@@ -205,4 +205,4 @@ Capped WER by clip duration, all corruptions:
 - **Short clips are hardest for Whisper**: large-v3 is 2.4x worse on clips under 5 s than on 15-30 s clips. A short clip gives the decoder little context, and every error weighs more against fewer words.
 - **wav2vec2 is flat across lengths** (19-22%). It decodes each frame on its own, so context length doesn't help it.
 
-The pipeline's audio-health check flags 2,205 of 44,000 clips as needing action, mostly hard clipping (`clip_025`: 1,123) and white noise (460). The flag doesn't predict Whisper errors: large-v3 does slightly better on flagged clips (4.6% against 5.1%). It does predict wav2vec2 errors (26.8% against 19.7%). The flag picks up clipping and noise, which hurt wav2vec2. The band limits and dropouts that hurt Whisper go unflagged.
+The pipeline's audio-health check flags 2,205 of 44,000 clips as needing action, mostly heavy clipping (`clip_025`: 1,123, `clip_05`: 105), white noise (460) and the band limits (`BL_800_3000`: 330, `BL_500_1000`: 71, `BL_600_2000`: 61). The reason it gives for the clipped clips is "signal too faint" (they are quiet after clipping), and for noise "likely static or hum". Its clipping detector never fires on the clipping corruptions: it flags 18 clips in all, every one of them clean, packet-loss or dropout audio. The flag doesn't predict Whisper errors: large-v3 does slightly better on flagged clips (capped WER 4.6% against 5.1%). It does predict wav2vec2 errors (26.8% against 19.7%), because it mostly catches heavy clipping and noise, which hurt wav2vec2. Most of the band-limited and dropout clips that hurt Whisper go unflagged: `BL_500_1000`, the worst corruption for every Whisper model, has 71 of its 2,000 clips flagged.

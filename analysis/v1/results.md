@@ -1,6 +1,6 @@
 # v1 (fullrun2000) results
 
-2000 LibriSpeech samples, 22 corruption types (including `none`), 7 models (6 Whisper sizes on HF + wav2vec2-large-960h-lv60-self), NVIDIA A10 on Lambda ($1.29/h).
+2000 LibriSpeech samples, 22 corruption types (including `none`), 7 models (6 Whisper sizes on HF + wav2vec2-large-960h-lv60-self), NVIDIA A10 on Lambda.
 
 Sources:
 - Results: `results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000.pkl` (same file as `gs://<bucket>/results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000_SAMPLES_PER_CALL_1_r1.pkl`, uploaded 2026-10-15 05:31 UTC).
@@ -24,7 +24,7 @@ The run happened in three pieces, and only two have timing:
 | Finish | `fullrun2000_finish` | found the final pickle in the cache and exited | 27 s | - |
 | Long-clip side run | `fullrun2000_finish_longform` | 8 clips over 30 s x 6 Whisper models x 22 corruptions, `WHISPER_LONGFORM=sequential` | 231 s | 4.87 |
 
-The resume ran in a plain SSH shell that dropped (see the README), so no sweep folder, `timing.jsonl` or GPU/CPU logs were saved for it. **The timing of 85% of the run is missing**, and `analyze.py --combine` cannot produce a total. From the first attempt's rate, the full 308,000 inferences take about 308,000 / 21.9 = 3.9 h of GPU time, about $5.0 at $1.29/h, or $0.0074 per audio hour.
+The resume ran in a plain SSH shell that dropped (see the README), so no sweep folder, `timing.jsonl` or GPU/CPU logs were saved for it. **The timing of 85% of the run is missing**, and `analyze.py --combine` cannot produce a total. From the first attempt's rate, the full 308,000 inferences take about 308,000 / 21.9 = 3.9 h of GPU time.
 
 First attempt, per-sample breakdown: GPU inference is 99% of per-sample work (infer 2,171 s, scoring 12 s, waiting on prep 6 s after the first sample). GPU utilisation 76% mean, busy 93% of the time, VRAM peak 21.8 GB of 23 GB, 137 W. The 7 models at batch size 22 nearly fill the A10's memory, so there is little headroom for a larger batch.
 
@@ -92,7 +92,7 @@ Sequential long-form decoding is better for base and above (by 6 points on small
 
 ## What looks wrong or incomplete
 
-1. **No timing for the resume**, which did 85% of the work. Throughput and cost for the full run are an extrapolation from the first 300 samples. The detached-run fix (2591359 on `main`, 7a1b150 on `exploration`) prevents this next time.
+1. **No timing for the resume**, which did 85% of the work. Throughput for the full run is an extrapolation from the first 300 samples. The detached-run fix (2591359 on `main`, 7a1b150 on `exploration`) prevents this next time.
 2. **`fullrun2000_finish` produced no metrics**: it only loaded the cached result, so its report is mostly dashes. That is expected, not a bug, but its report should not be read as a run.
 3. **Repetition hallucinations** in tiny/base dominate their corpus WER on two corruptions (see above).
 4. 46,200 rows without `duration_s` (harmless, explained above).

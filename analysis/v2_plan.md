@@ -15,7 +15,7 @@ On branch `run/full-rerun-readiness` (from `main` at 92ad1b4), pushed, no pull r
 | 62d933c | Log `startup` and `resume_skip` phases and a `run_config` record (effective config, library versions, GPU name) |
 | 33edd4a | `analyze.py` counts distinct samples in `n_samples` (it counted one per model) |
 | 8549708 | `sweep.json` records the git commit, a dirty flag and the image id |
-| 0e87f67 | README: clone `main`, use `fullrun2000b` as `SWEEP_ID` and `RUN_POSTFIX`, estimate ~4 h / $5.20 |
+| 0e87f67 | README: clone `main`, use `fullrun2000b` as `SWEEP_ID` and `RUN_POSTFIX`, estimate ~4 h |
 | b61fabc | ntfy alert when no run log has grown for `STALL_MIN` minutes (default 30); alert only (decision B) |
 | c11ce29 | Each run's results pickle is copied inside GCS next to its logs and its size verified (decision C) |
 | 4deb5fa | `CLIPS` (run only listed sample/corruption pairs) and `WHISPER_FALLBACK` (temperature fallback) |

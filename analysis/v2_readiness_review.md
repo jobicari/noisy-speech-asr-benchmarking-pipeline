@@ -13,7 +13,7 @@ Branch `run/full-rerun-readiness` (from `main` at 92ad1b4), since merged into `m
 | c11ce29 | `copy_results.py`: after the upload, each run's results pickle is copied inside GCS to `lambda_bench_runs/<sweep>/<run_id>/` and its size verified | Decision C |
 | 4deb5fa | `CLIPS` (run only listed sample/corruption pairs) and `WHISPER_FALLBACK` (OpenAI-style temperature fallback) | Decision A, the looped-clip side run |
 | e3c43ff | `find_loop_clips.py` and the `<SWEEP_ID>_loops` side run in `run_and_terminate.sh`, README docs and a smoke test | Decision A |
-| 0e87f67 | README: clone `main` (not `exploration`), use `fullrun2000b` as `SWEEP_ID` and `RUN_POSTFIX`, update the estimate to ~4 h / $5.20, document the new records | Reusing `fullrun2000` would overwrite the first run's GCS logs, and the same label could resume from or load stale results |
+| 0e87f67 | README: clone `main` (not `exploration`), use `fullrun2000b` as `SWEEP_ID` and `RUN_POSTFIX`, update the estimate to ~4 h, document the new records | Reusing `fullrun2000` would overwrite the first run's GCS logs, and the same label could resume from or load stale results |
 
 `run_config` only reads the GPU name if torch is already loaded, because importing torch next to MLX aborts on macOS (two OpenMP runtimes); this was checked on macOS.
 

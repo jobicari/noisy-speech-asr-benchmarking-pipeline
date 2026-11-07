@@ -1,4 +1,4 @@
-"""v2 (fullrun2000b) timing: phases, per model, over time, GPU, cost, comparison with v1 attempt 1.
+"""v2 (fullrun2000b) timing: phases, per model, over time, GPU, comparison with v1 attempt 1.
 
 Run from the repo root (stdlib + pandas):
     python analysis/v2/timing.py
@@ -11,7 +11,6 @@ from pathlib import Path
 import pandas as pd
 
 R = Path("results/lambda_bench_runs")
-PRICE = 1.29
 ORDER = ["tiny", "base", "small", "medium", "large-v3", "turbo", "w2v2"]
 
 
@@ -50,7 +49,7 @@ def report(sweep):
     meta, t, gpu = run(sweep)
     wall = meta["t_end"] - meta["t_start"]
     s, p, ph, ck = (t[t.event == e] for e in ("sample", "prep", "phase", "checkpoint"))
-    print(f"\n# {sweep}: wall {wall:,.0f} s ({wall / 3600:.2f} h), ${PRICE * wall / 3600:.2f}, exit {meta['exit_code']}")
+    print(f"\n# {sweep}: wall {wall:,.0f} s ({wall / 3600:.2f} h), exit {meta['exit_code']}")
     print("records:", t.event.value_counts().to_dict())
     rc = t[t.event == "run_config"]
     if len(rc):
@@ -78,9 +77,7 @@ def report(sweep):
     steady = wall - ph.seconds.sum()
     print(f"inferences {n_inf:,}, audio {audio / 3600:.1f} h (all corruptions, once per sample), "
           f"{n_inf / wall:.2f} inf/s overall, {n_inf / steady:.2f} steady, RTF {steady / audio:.4f} "
-          f"(per model {steady / audio / s.model.nunique():.4f}), ${PRICE * steady / audio:.3f} per audio hour "
-          f"through all models, ${PRICE * steady / audio / s.model.nunique():.4f} per audio hour per model, "
-          f"${PRICE * steady / 3600 / n_inf * 1000:.4f} per 1k inferences")
+          f"(per model {steady / audio / s.model.nunique():.4f})")
     print(f"prep: {p.t_prep_s.sum():,.0f} s total on the workers, p50 {p.t_prep_s.median():.2f} s, max {p.t_prep_s.max():.2f} s per sample")
 
     # Per model
@@ -135,7 +132,7 @@ print("v2 inf/s on first 316:", round(first.n_items.sum() / first.t_infer_s.sum(
 print("audio s per sample, first 316:", round(first.groupby("sample_idx").audio_s.first().mean(), 1),
       "rest:", round(rest.groupby("sample_idx").audio_s.first().mean(), 1))
 
-print("\n# Cost of repetition loops in the main run")
+print("\n# GPU time lost to repetition loops in the main run")
 import pickle
 import zlib
 rows = pickle.load(open(R / "fullrun2000b/SAMPLES_PER_CALL_1_r1/fullRun__hf__986ea79c__2000samples__fullrun2000b_SAMPLES_PER_CALL_1_r1.pkl", "rb"))

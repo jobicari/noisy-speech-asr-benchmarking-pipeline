@@ -176,7 +176,7 @@ def analyse_run(run_dir, price):
     if price:
         r["run_cost_usd"] = price * wall / 3600
         r["usd_per_audio_hour"] = price * steady_wall / audio_s if audio_s else None
-        r["usd_per_1k_inf"] = price * steady_wall / n_items * 1000 if n_items else None
+        r["usd_per_1k_inf"] = price * steady_wall / 3600 / n_items * 1000 if n_items else None
     return r
 
 
@@ -373,8 +373,8 @@ def combine(dirs, price, out):
          "gpu_util_mean": (sum((r["gpu_util_mean"] or 0) * r["wall_s"] for r in rows) / wall) if wall else None}
     if price:
         c["run_cost_usd"] = price * wall / 3600
-        c["usd_per_1k_inf"] = price * steady / n * 1000 if n else None
-        c["usd_per_1k_inf_all_in"] = price * wall / n * 1000 if n else None
+        c["usd_per_1k_inf"] = price * steady / 3600 / n * 1000 if n else None
+        c["usd_per_1k_inf_all_in"] = price * wall / 3600 / n * 1000 if n else None
 
     fields = list(c.keys())
     with out.open("w", newline="") as f:

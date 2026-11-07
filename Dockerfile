@@ -12,16 +12,15 @@ RUN groupadd -r app && useradd -r -g app app
 
 WORKDIR /app
 
-# Install CUDA-enabled torch/torchaudio first (large, rarely-changing layer).
+# One install step for everything. torch, torchaudio and torchcodec are pinned in
+# requirements-docker.txt and come from the cu126 index; constraints-docker.txt pins
+# every other package, so a rebuild runs the same code.
 # cu126 wheels bundle their own CUDA runtime, so no CUDA base image is needed —
 # only the host's NVIDIA driver + nvidia-container-toolkit at `docker run` time.
-# Exact versions, so a rebuild runs the same code. Keep them in sync with
-# constraints-docker.txt, which pins everything installed below.
 # torch must stay >= 2.6: transformers assumes torch.accelerator, and an older build
 # crashes its import with "no attribute 'accelerator'".
-# torchcodec is included here (same index) so it is a CUDA build that matches
-# torch: datasets' audio decoding backend requires it, it's not optional despite
-# not being imported directly anywhere in src/.
+# torchcodec must be the CUDA build that matches torch: datasets' audio decoding
+# backend requires it, it's not optional despite not being imported in src/.
 
 COPY requirements-docker.txt constraints-docker.txt ./
 RUN pip install --no-cache-dir -r requirements-docker.txt -c constraints-docker.txt

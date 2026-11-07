@@ -2,7 +2,7 @@
 
 Source: the `[TIMING]` records, `run.json`, `gpu.csv` and `cpu.csv` in `results/lambda_bench_runs/fullrun2000b/`, `fullrun2000b_longform/` and `fullrun2000b_loops/` (local copies of the GCS folders), plus v1's attempt 1 in `fullrun2000/`. Every number comes from [`timing.py`](timing.py). Computed 2026-10-30.
 
-Config: one NVIDIA A10 (22 GiB usable) on Lambda at $1.29/h, 30 host CPUs, `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, fp16, HF backend. Image and checkout are both `main` at `5fe7566`, transformers 5.19.0, torch 2.14.1+cu126.
+Config: one NVIDIA A10 (22 GiB usable) on Lambda, 30 host CPUs, `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, fp16, HF backend. Image and checkout are both `main` at `5fe7566`, transformers 5.19.0, torch 2.14.1+cu126.
 
 ## 1. Timing data is complete
 
@@ -15,19 +15,18 @@ The run happened in one piece, with no crash and no resume.
 
 ## 2. The whole run
 
-| Piece | When (UTC, 2026-10-29) | Wall | Cost | Inferences | Throughput |
-|---|---|---|---|---|---|
-| Main run `fullrun2000b` | 04:56-09:19 | 15,770 s (4.38 h) | $5.65 | 308,000 | 19.65 inf/s steady |
-| Long-clip pass `_longform` | 09:19-09:24 | 255 s | $0.09 | 1,056 | 4.6 inf/s (30-35 s clips) |
-| Looped-clip pass `_loops` | 09:24-10:11 | 2,848 s (0.79 h) | $1.02 | 6,462 | 2.3 inf/s (fallback decoding) |
-| Finders, analysis, uploads, results copies, terminate | to about 10:15 | about 4 min | about $0.10 | | |
-| **Total** | **04:56 to about 10:15** | **about 5.3 h** | **about $6.85** | 315,518 | |
+| Piece | When (UTC, 2026-10-29) | Wall | Inferences | Throughput |
+|---|---|---|---|---|
+| Main run `fullrun2000b` | 04:56-09:19 | 15,770 s (4.38 h) | 308,000 | 19.65 inf/s steady |
+| Long-clip pass `_longform` | 09:19-09:24 | 255 s | 1,056 | 4.6 inf/s (30-35 s clips) |
+| Looped-clip pass `_loops` | 09:24-10:11 | 2,848 s (0.79 h) | 6,462 | 2.3 inf/s (fallback decoding) |
+| Finders, analysis, uploads, results copies, terminate | to about 10:15 | about 4 min | | |
+| **Total** | **04:56 to about 10:15** | **about 5.3 h** | 315,518 | |
 
 The instance's own setup time (build, smoke tests) before 04:56 is not included. The end time is an estimate: the uploaded copy of the wrapper log is taken just before the upload, so the upload and terminate lines aren't in it.
 
-Main run unit costs:
-- **$0.018 per 1,000 transcriptions**
-- **$0.0086 per audio hour per model**: 93.8 h of corrupted audio through 7 models
+Main run unit rates:
+- **93.8 h of corrupted audio** through each of the 7 models
 - **RTF 0.0066 per model**: one model transcribes one hour of audio in 24 s
 
 ## 3. Where the main run's time went
@@ -68,10 +67,10 @@ Main run unit costs:
 
 - **large-v3 alone is 28% of the GPU time.** large-v3, turbo and medium together are 65%. Dropping or replacing one of them is the only lever that moves total time much.
 - **Turbo is 1.5x faster than large-v3** for 0.5 points of WER over all corruptions (5.68 against 5.16).
-- **tiny, base and small cost the same** (about 1,600-1,750 s each), and tiny is slower than small. Their medians scale with size (0.36, 0.41, 0.65 s), but their tails don't. See the next section.
-- **wav2vec2 (CTC, no decoder loop) is 10.6x faster than large-v3** and 2.6% of the run.
+- **tiny, base and small take the same time** (about 1,600-1,750 s each), and tiny is slower than small. Their medians scale with size (0.36, 0.41, 0.65 s), but their tails don't. See the next section.
+- **wav2vec2 (CTC, no decoder loop) is 10.7x faster than large-v3** and 2.6% of the run.
 
-## 5. What repetition loops cost
+## 5. GPU time lost to repetition loops
 
 Sample calls in which at least one of the 22 clips looped, against calls with no loop:
 
@@ -85,8 +84,8 @@ Sample calls in which at least one of the 22 clips looped, against calls with no
 | turbo | 7 | 3.41 | 1.44 | 24 s |
 
 - **A loop makes a call about 6-7x slower** (2.4x for turbo): the whole batch waits for its looping clip to reach the 448-token limit.
-- **Loops cost 2,271 s, 14.6% of all inference**, measured against each model's loop-free mean. They are the whole reason tiny and base are as slow as small. Without loops, tiny would take about 680 s, not 1,724 s.
-- The looped-clip pass (fallback) would cut this cost only if it replaced greedy decoding in the main run. Run as a separate pass, it adds 0.8 h.
+- **Loops take 2,271 s, 14.6% of all inference**, measured against each model's loop-free mean. They are the whole reason tiny and base are as slow as small. Without loops, tiny would take about 680 s, not 1,724 s.
+- The looped-clip pass (fallback) would cut this time only if it replaced greedy decoding in the main run. Run as a separate pass, it adds 0.8 h.
 
 ## 6. Side passes
 
@@ -103,7 +102,7 @@ Sample calls in which at least one of the 22 clips looped, against calls with no
 
 ## 7. v2 against v1
 
-v2 is **10% slower than v1**: 19.65 inf/s steady against 21.99 for v1's attempt 1. Over the 316 samples both runs timed, sample by sample:
+v2 is **11% slower than v1**: 19.65 inf/s steady against 21.99 for v1's attempt 1. Over the 316 samples both runs timed, sample by sample:
 
 | Model | v1 (s) | v2 (s) | v2 / v1 |
 |---|---|---|---|
@@ -134,4 +133,3 @@ A short benchmark on one instance with both images (same 20 samples, tiny only) 
 Other v1 vs v2 differences:
 - **VRAM peak 22,333 MiB in v2 against 21,809 in v1**, for identical work. v2 has no headroom left.
 - Shares of GPU time per model are within 2.4 points of v1's.
-- **Cost per audio hour per model: $0.0086 against $0.0074.**

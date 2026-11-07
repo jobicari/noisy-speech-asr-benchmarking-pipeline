@@ -5,7 +5,7 @@ v1 is the name for the first full benchmark run, labelled `fullrun2000` in the c
 Details live in two files next to this one:
 
 - [`results.md`](results.md): completeness checks, corpus WER per model and per corruption, the long-clip comparison.
-- [`timing.md`](timing.md): the pieces of the run, wall time, cost, per-model GPU time, comparison with earlier sweeps.
+- [`timing.md`](timing.md): the pieces of the run, wall time, per-model GPU time, comparison with earlier sweeps.
 
 Both were written on 2026-10-29 from local copies of the result pickles and sweep folders. This README summarises them; where a number here differs from those files, the files win.
 
@@ -13,7 +13,7 @@ Both were written on 2026-10-29 from local copies of the result pickles and swee
 
 - 2000 LibriSpeech samples x 22 corruption types (including `none`) x 7 models = 308,000 transcriptions.
 - Models: whisper-tiny, base, small, medium, large-v3, large-v3-turbo (Hugging Face backend), and wav2vec2-large-960h-lv60-self.
-- Hardware: one NVIDIA A10 (24 GB) on Lambda at $1.29/h. `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, fp16.
+- Hardware: one NVIDIA A10 (24 GB) on Lambda. `BATCH_SIZE=22`, `SAMPLES_PER_CALL=1`, `CHECKPOINT_SIZE=50`, 4 prep workers, thread caps 2, fp16.
 - Decoding: greedy, Hugging Face defaults, no temperature fallback or compression-ratio check. Clips over 30 s used `WHISPER_LONGFORM=chunked`.
 - Result file: `results/transcribe_cache/fullRun__hf__986ea79c__2000samples__fullrun2000.pkl` (local copy). The GCS copy in `transcribe_cache/` is gone, so the local copy is the only one.
 
@@ -66,9 +66,9 @@ Capping each row's errors at its reference length gives:
 
 On `BL_500_1000` alone, capping takes tiny from 337% to 98% and base from 346% to 96%. The ranking of the large models does not change.
 
-## Timing and cost
+## Timing
 
-- **About 4.0 h of container time and about $5.20** (instance setup and idle time not included).
+- **About 4.0 h of container time** (instance setup and idle time not included).
 - **About 21.8 inferences/s** over the whole main run (about 7.05 s and 154 inferences per sample, about 8.5 samples/min).
 - **GPU-bound**: on attempt 1, GPU inference was 97.7% of wall time, the GPU was busy in 93% of nvidia-smi readings, and prep on 4 workers was fully hidden after the first sample.
 - **large-v3 takes 30% of GPU time**; large-v3, turbo and medium together take 69%. wav2vec2 is 3%.

@@ -93,15 +93,18 @@ t = pd.DataFrame({
     "median_row_wer": by_model(v2, lambda d: 100 * (d.err / d.num_words).median()),
     "loop_rows": v2.groupby("model").loop.sum().reindex(ORDER),
     "empty": by_model(v2, lambda d: (d.hw == 0).sum()),
-}).round(2)
-print(md(t))
+})
+print(md(t.round(2)))
 print("all / clean:", (t["all"] / t["clean"]).round(1).to_dict())
 print("capped / clean:", (t["capped"] / t["clean"]).round(1).to_dict())
 
 print("\n## Per corruption, corpus WER")
-pc = v2.groupby(["corr_type", "model"]).apply(wer, include_groups=False).unstack()[ORDER].round(1).sort_values("large-v3")
-print(md(pc))
+pc = v2.groupby(["corr_type", "model"]).apply(wer, include_groups=False).unstack()[ORDER].sort_values("large-v3")
+print(md(pc.round(1)))
+# Unrounded, so a 0.04-point lead is not counted as a tie
 print("best model per corruption:", pc.idxmin(axis=1).value_counts().to_dict())
+gap = (pc["turbo"] - pc["large-v3"]).round(2)
+print("turbo within 0.5 points of large-v3:", (gap <= 0.5).sum(), "of", len(gap), "| larger gaps:", gap[gap > 0.5].to_dict())
 print("\n## Per corruption, capped WER")
 print(md(v2.groupby(["corr_type", "model"]).apply(capped, include_groups=False).unstack()[ORDER].round(1).loc[pc.index]))
 
@@ -120,6 +123,14 @@ print("rows per bucket:", v2[v2.model == "tiny"].groupby("dur", observed=True).s
 print("\n## Audio-health flag (action_required) vs capped WER")
 print(md(v2.groupby(["flag", "model"]).apply(capped, include_groups=False).unstack()[ORDER].round(1)))
 print("flagged clips by corruption:", v2[(v2.model == "tiny") & v2.flag].corr_type.value_counts().to_dict())
+reasons = {}
+for r in pickle.load(open(V2, "rb")):
+    flags = r["sample_analysis"]["asr_flags"]
+    if r["model"] == "openai_whisper-tiny" and flags["action_required"]:
+        for k, v in flags["reasons"].items():
+            if v:
+                reasons[(r["corr_type"], k)] = reasons.get((r["corr_type"], k), 0) + 1
+print("flagged clips by corruption and reason:", dict(sorted(reasons.items(), key=lambda kv: -kv[1])))
 
 print("\n## Looped-clip pass (fallback)")
 lp = load(LOOPS)

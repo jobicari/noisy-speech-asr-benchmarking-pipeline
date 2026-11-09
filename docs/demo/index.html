@@ -90,7 +90,7 @@ footer { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 16px;
 
   <div class="tabs" role="tablist" id="tabs"></div>
   <section class="card" id="clip" aria-live="polite"></section>
-  <p class="small" style="margin-top:12px">How these clips were chosen: automatically, not by hand. Among the 445 recordings of 7–13 s with 18–35 words, each damage type shows the clip whose per-model error rates are closest to that model's error rate over all 2,000 clips with that damage. For the 500–1000 Hz band, the choice was limited to clips where Whisper tiny loops, which happens on 27% of them.</p>
+  <p class="small" style="margin-top:12px">How these clips were chosen: automatically, not by hand. Among the 445 recordings of 7–13 s with 18–35 words, each damage type shows the clip whose per-model error rates are closest to that model's error rate over all 2,000 clips with that damage. For the 500–1000 Hz band, the choice was limited to clips where Whisper tiny loops, which happens on 27% of them. There is no codec example: the Opus encoder gives slightly different output on different machines, so the audio here would not be exactly what the models heard.</p>
 
   <h2>Every model on every kind of damage</h2>
   <p>Word error rate (%) over all 2,000 recordings, sorted by Whisper large-v3. Darker is worse.</p>
@@ -131,12 +131,12 @@ const MODEL = { "tiny": "Whisper tiny", "base": "Whisper base", "small": "Whispe
   "turbo": "Whisper large-v3-turbo", "large-v3": "Whisper large-v3", "wav2vec2": "wav2vec2-large" };
 const WHY = {
   "none": "The baseline. On clean read speech every model is close to perfect; the smaller Whisper models make a few more slips.",
-  "codec_6k": "A very low-bitrate voice codec, like a bad video call. Mild for everyone except the smallest models.",
   "RV_0.5_251": "A real room's echo, from a measured impulse response. Small models and wav2vec2 start to slip.",
   "clip_025": "Hard clipping at 2.5% of the peak, like a badly overloaded input. Whisper copes; wav2vec2 does much worse.",
   "PL_5_.5": "Half of all 5 ms packets dropped to silence. Whisper fills the gaps from context; wav2vec2, which reads each slice of sound on its own, collapses.",
   "WN_3snr": "White noise almost as loud as the voice (3 dB signal-to-noise ratio). Accuracy now tracks model size closely.",
   "BL_800_3000": "Only 800–3000 Hz kept, roughly a phone line. Fine from Whisper small up.",
+  "WN_3-SV_.5-SDO_8_100_15": "Loud noise, then reverb, then dropouts, all on the same clip. Over all 2,000 clips the large Whisper models get about a quarter of the words wrong, and the smaller ones and wav2vec2 lose most of the sentence. On this clip large-v3 does worse than turbo: single clips vary, which is why the averages matter.",
   "BL_500_1000": "Only 500–1000 Hz kept, which removes most consonants. Every model fails, and Whisper tiny falls into a repetition loop. Temperature fallback, a decoding retry, stops the loop but doesn't recover the words."
 };
 

@@ -467,7 +467,6 @@ With MLX, `model_load` is close to 0 because models load on the first transcribe
 - Notes with real values (bucket, paths, instance details) belong in a `*.local.md` file, which is gitignored.
 - Revoke or rotate the GitHub PAT used for cloning when you're done with an instance.
 - Revoke the Lambda API key when you no longer run jobs on Lambda. It can terminate any of your instances.
-- `notebooks/tests-asr-pipeline.ipynb` still uses the old API.
 - A transformers deprecation warning about passing `generation_config` alongside other kwargs is known and harmless.
 
 ## Full runs and tuning history

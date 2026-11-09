@@ -29,7 +29,16 @@
 #
 # The instance is terminated only if the main sweep succeeded and the upload is
 # verified. A failed side run is uploaded and reported but does not block termination.
+#
+# Run it from anywhere, e.g. ./scripts/cloud/run_and_terminate.sh: it works from the repo root,
+# so relative paths (OUT_ROOT, ENV_FILE, KEY_FILE) are relative to the repo root.
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+# Helper scripts mounted into the image at run time (the image only holds app.py and src/)
+CONTAINER_SCRIPTS="$REPO_ROOT/scripts/container"
+cd "$REPO_ROOT"
 
 : "${SWEEP_ID:?Set SWEEP_ID (it is also the GCS folder name)}"
 IMAGE="${IMAGE:-asr-benchmark:lambda}"
@@ -64,7 +73,7 @@ mkdir -p "$SWEEP_DIR"
 # A closed SSH session sends SIGHUP to everything started from it. Re-run in a new
 # session (setsid) with no terminal, so the run survives it even outside tmux.
 if [[ "${DETACH:-1}" == "1" && -z "${_RT_DETACHED:-}" ]]; then
-  _RT_DETACHED=1 setsid nohup "$0" "$@" >/dev/null 2>&1 </dev/null &
+  _RT_DETACHED=1 setsid nohup "$SCRIPT_DIR/run_and_terminate.sh" "$@" >/dev/null 2>&1 </dev/null &
   echo "Running detached (pid $!). Follow:  tail -f $PIPELINE_LOG"
   echo "Stop:  pkill -f run_and_terminate.sh  (a running container keeps going: docker stop it)"
   exit 0
@@ -126,7 +135,7 @@ upload() {
   $DOCKER run --rm --env-file "$ENV_FILE" \
     -v "$KEY_FILE:/secrets/key.json:ro" \
     -v "$abs:/upload:ro" \
-    -v "$PWD/upload_results.py:/app/upload_results.py:ro" \
+    -v "$CONTAINER_SCRIPTS/upload_results.py:/app/upload_results.py:ro" \
     --entrypoint python "$IMAGE" /app/upload_results.py /upload "$GCS_PREFIX/$dest"
 }
 
@@ -140,14 +149,14 @@ copy_results() {
     [[ -n "$key" ]] || { log "No results key in $run/container.log: nothing to copy"; rc=1; continue; }
     $DOCKER run --rm --env-file "$ENV_FILE" \
       -v "$KEY_FILE:/secrets/key.json:ro" \
-      -v "$PWD/copy_results.py:/app/copy_results.py:ro" \
+      -v "$CONTAINER_SCRIPTS/copy_results.py:/app/copy_results.py:ro" \
       --entrypoint python "$IMAGE" /app/copy_results.py "$key" "$GCS_PREFIX/$dest/$(basename "$run")" || rc=1
   done
   return $rc
 }
 
 analyze() {
-  python3 analyze.py "$1" --price-per-hour "$PRICE_PER_HOUR" "${@:2}" || log "analyze.py failed on $1 (uploading anyway)"
+  python3 "$SCRIPT_DIR/analyze.py" "$1" --price-per-hour "$PRICE_PER_HOUR" "${@:2}" || log "analyze.py failed on $1 (uploading anyway)"
 }
 
 # Run a finder script (find_long_ids.py, find_loop_clips.py) in the image on the results
@@ -161,8 +170,8 @@ find_in_main_results() {
     [[ -n "$key" ]] || { log "No results key in $clog" >&2; continue; }
     found=$($DOCKER run --rm --env-file "$ENV_FILE" \
       -v "$KEY_FILE:/secrets/key.json:ro" \
-      -v "$PWD/find_long_ids.py:/app/find_long_ids.py:ro" \
-      -v "$PWD/$script:/app/$script:ro" \
+      -v "$CONTAINER_SCRIPTS/find_long_ids.py:/app/find_long_ids.py:ro" \
+      -v "$CONTAINER_SCRIPTS/$script:/app/$script:ro" \
       --entrypoint python "$IMAGE" "/app/$script" "$key" "$@") \
       || { log "$script failed on $key" >&2; continue; }
     out="${out:+$out,}$found"
@@ -200,7 +209,7 @@ fi
 
 # ---- 1. Main sweep -----------------------------------------------------------
 log "Starting sweep $SWEEP_ID"
-./run_sweep.sh || log "run_sweep.sh exited with $?"
+"$SCRIPT_DIR/run_sweep.sh" || log "run_sweep.sh exited with $?"
 main_ok=1
 sweep_ok "$SWEEP_DIR" || main_ok=0
 if [[ $main_ok == 1 ]]; then
@@ -233,7 +242,7 @@ if [[ $main_ok == 1 && "$LONGFORM_RUN" == "1" ]]; then
     # SAMPLE_IDS and HF_MODELS contain commas, which PER_RUN_ENV would split on.
     SWEEP_ID="$SIDE_ID" CONFIGS="WHISPER_LONGFORM=sequential" REPEATS=1 N_INFERENCES= \
     EXTRA_DOCKER_ARGS="${EXTRA_DOCKER_ARGS:-} -e SAMPLE_IDS=$long_ids -e NUMBER_OF_SAMPLES=$n_long -e HF_MODELS=$models -e RUN_POSTFIX=${SIDE_ID} -e CHECKPOINT_SIZE=5" \
-      ./run_sweep.sh || log "run_sweep.sh (side) exited with $?"
+      "$SCRIPT_DIR/run_sweep.sh" || log "run_sweep.sh (side) exited with $?"
     if sweep_ok "$SIDE_DIR"; then side_ok=1; else side_ok=0; notify "side run failed" "Long-clip side run $SIDE_ID failed. Main results are fine."; fi
     analyze "$SIDE_DIR"
   fi
@@ -258,7 +267,7 @@ if [[ $main_ok == 1 && "$LOOP_RUN" == "1" ]]; then
     # Most samples have one looped clip, so batch clips across samples
     SWEEP_ID="$LOOP_ID" CONFIGS="WHISPER_FALLBACK=True" REPEATS=1 N_INFERENCES= \
     EXTRA_DOCKER_ARGS="${EXTRA_DOCKER_ARGS:-} -e CLIPS=$clips -e NUMBER_OF_SAMPLES=$n_samples -e HF_MODELS=$models -e RUN_POSTFIX=${LOOP_ID} -e SAMPLES_PER_CALL=20" \
-      ./run_sweep.sh || log "run_sweep.sh (loops) exited with $?"
+      "$SCRIPT_DIR/run_sweep.sh" || log "run_sweep.sh (loops) exited with $?"
     if sweep_ok "$LOOP_DIR"; then loop_ok=1; else loop_ok=0; notify "loop side run failed" "Loop side run $LOOP_ID failed. Main results are fine."; fi
     analyze "$LOOP_DIR"
   fi

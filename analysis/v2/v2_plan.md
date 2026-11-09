@@ -1,8 +1,8 @@
 # v2 plan: the second full run (`fullrun2000b`)
 
-**v2 ran on 2026-10-29.** Results and timing are in [`v2/README.md`](v2/README.md). This plan is kept as written before the run.
+**v2 ran on 2026-10-29.** Results and timing are in [`README.md`](README.md). This plan is kept as written before the run.
 
-v2 is the planned rerun of v1 ([`v1/README.md`](v1/README.md)) with the same data, seed, models and settings. Its main purpose is complete timing: v1 lost per-sample timing for samples 301-2000. Written 2026-10-29. Nothing below has been run on a GPU yet.
+v2 is the planned rerun of v1 ([`../v1/README.md`](../v1/README.md)) with the same data, seed, models and settings. Its main purpose is complete timing: v1 lost per-sample timing for samples 301-2000. Written 2026-10-29. Nothing below has been run on a GPU yet.
 
 The full review behind this plan, with every risk checked and the trust checklist, is in [`v2_readiness_review.md`](v2_readiness_review.md).
 

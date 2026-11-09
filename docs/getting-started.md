@@ -48,7 +48,7 @@ app.py
 | `.../data.py` | Lazy loaders for the speech dataset (streaming) and the MIT IR dataset |
 | `.../storage.py` | `LocalStorage` / `GCSStorage` with the same interface |
 | `.../utility.py` | Run label, `checkpoint_iterator`, `print_timing`, seeding |
-| `run_sweep.sh`, `analyze.py` | Benchmark tooling (repo root) |
+| `scripts/` | Cloud run, sweep, analysis and demo scripts, each listed in [`scripts/README.md`](../scripts/README.md) |
 
 ### Test types and corruptions
 | `TEST_TYPE` | Corruptions | Use |
@@ -270,7 +270,7 @@ CONFIGS="SAMPLES_PER_CALL=1" \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json SWEEP_ID=models7_smoke \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=models7_smoke_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=20,CHECKPOINT_SIZE=20,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
-REPEATS=1 ./run_sweep.sh
+REPEATS=1 ./scripts/cloud/run_sweep.sh
 ```
 To compare settings, put one config per variant in `CONFIGS`, e.g. `CONFIGS="N_PREP_WORKERS=1 N_PREP_WORKERS=4"`, and use `REPEATS=2`.
 - `CONFIGS`: space-separated configs. One config is one or more `VAR=value` pairs joined by commas.
@@ -282,13 +282,13 @@ To compare settings, put one config per variant in `CONFIGS`, e.g. `CONFIGS="N_P
 
 Analyse:
 ```bash
-python3 analyze.py results/lambda_bench_runs/sweep_<id> --target-inferences <samples*22*models>
+python3 scripts/cloud/analyze.py results/lambda_bench_runs/sweep_<id> --target-inferences <samples*22*models>
 ```
 This writes `summary.csv`, `runs.csv`, `report.md` and `report.html` into the sweep folder. Copy the folder back with `scp -r`, then **terminate the instance**.
 
 A crashed run and its resume are two sweep folders. Don't put them in one folder: `analyze.py` averages runs of the same config, but wall time must be added. Use `--combine` instead:
 ```bash
-python3 analyze.py --combine results/lambda_bench_runs/fullrun2000 results/lambda_bench_runs/fullrun2000_resume \
+python3 scripts/cloud/analyze.py --combine results/lambda_bench_runs/fullrun2000 results/lambda_bench_runs/fullrun2000_resume \
   --out fullrun2000_combined.csv
 ```
 It writes one row per attempt and a TOTAL row: wall, fixed, inferences and audio seconds are added, and the rates are recomputed from the sums. Failed attempts count (their GPU time was used). `duplicated_inferences` counts work redone after the resume.
@@ -333,7 +333,7 @@ SWEEP_ID=automation_test TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=automation_test_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullDr,NUMBER_OF_SAMPLES=10,CHECKPOINT_SIZE=5,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
-REPEATS=1 ./run_and_terminate.sh
+REPEATS=1 ./scripts/cloud/run_and_terminate.sh
 ```
 It should end with `VERIFIED N files in gs://.../lambda_bench_runs/automation_test/`.
 
@@ -343,7 +343,7 @@ SWEEP_ID=smoke_longclip TERMINATE=0 CONFIGS="SAMPLES_PER_CALL=1" \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface -e SAMPLE_IDS=2094-142345-0007,2094-142345-0008" \
 PER_RUN_ENV="RUN_POSTFIX=smoke_longclip_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2,CHECKPOINT_SIZE=2,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
-REPEATS=1 ./run_and_terminate.sh
+REPEATS=1 ./scripts/cloud/run_and_terminate.sh
 ```
 Main run: 2 × 22 × 7 = 308 inferences. Side run: 1 × 22 × 6 = 132. Check:
 1. `results/lambda_bench_runs/smoke_longclip/*/container.log` ends with `RUN COMPLETED SUCCESSFULLY` and has no "more than 3000 mel input features" error (chunking works on CUDA).
@@ -358,7 +358,7 @@ SWEEP_ID=smoke_loops TERMINATE=0 LONGFORM_RUN=0 CONFIGS="SAMPLES_PER_CALL=1" \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface -e SAMPLE_IDS=6930-75918-0003,6930-75918-0004" \
 PER_RUN_ENV="RUN_POSTFIX=smoke_loops_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2,CHECKPOINT_SIZE=2,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
-REPEATS=1 ./run_and_terminate.sh
+REPEATS=1 ./scripts/cloud/run_and_terminate.sh
 ```
 Check that the pipeline log shows `Loop side run smoke_loops_loops: N clips in M samples`, that `smoke_loops_loops/*/container.log` ends with `RUN COMPLETED SUCCESSFULLY` and its `run_config` record has `"WHISPER_FALLBACK": true`, that the looped transcripts in its results differ from the main run's, and that the log ends with `loops=1` and a `VERIFIED copy` line per run.
 
@@ -370,10 +370,10 @@ SWEEP_ID=fullrun2000b CONFIGS="SAMPLES_PER_CALL=1" TARGET_INFERENCES=308000 \
 ENV_FILE=$PWD/.env.docker KEY_FILE=$HOME/gcs-key.json \
 EXTRA_DOCKER_ARGS="-v $HOME/hf-cache:/app/.cache/huggingface" \
 PER_RUN_ENV="RUN_POSTFIX=fullrun2000b_{run_id},N_PREP_WORKERS=4,BATCH_SIZE=22,TEST_TYPE=fullRun,NUMBER_OF_SAMPLES=2000,CHECKPOINT_SIZE=50,OMP_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2,MKL_NUM_THREADS=2,NUMBA_NUM_THREADS=2" \
-REPEATS=1 ./run_and_terminate.sh
+REPEATS=1 ./scripts/cloud/run_and_terminate.sh
 ```
 1. It returns at once with `Running detached (pid N)`. `tail -f results/lambda_bench_runs/fullrun2000b.pipeline.log` must show `Will terminate instance <id>`.
-2. `watch -n 30 ./progress.sh` (in tmux if you like) and check that samples count up.
+2. `watch -n 30 ./scripts/cloud/progress.sh` (in tmux if you like) and check that samples count up.
 3. Close SSH whenever you want; the run doesn't depend on it.
 4. When the ETA has passed, check the Lambda console. If the instance is still there, terminate it by hand and read `results/lambda_bench_runs/<SWEEP_ID>.pipeline.log`.
 
@@ -395,8 +395,8 @@ curl -fsS -u "$API_KEY:" -H "Content-Type: application/json" \
 
 Progress, in a second tmux pane (`Ctrl-b c`):
 ```bash
-watch -n 30 ./progress.sh                                     # newest run under results/lambda_bench_runs
-./progress.sh results/lambda_bench_runs/fullrun1               # a specific sweep
+watch -n 30 ./scripts/cloud/progress.sh                       # newest run under results/lambda_bench_runs
+./scripts/cloud/progress.sh results/lambda_bench_runs/fullrun1 # a specific sweep
 ```
 It reads the live `container.log` and shows models, current checkpoint, samples done / total, rate, ETA, and how long ago the last sample finished. A resumed run counts the skipped samples. It uses GNU `find`, so it runs on the instance, not on macOS.
 

@@ -25,7 +25,11 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -d) detached=1 ;;
     --rm) ;;
-    --gpus|--env-file|-v) shift ;;
+    --gpus|--env-file) shift ;;
+    # A mounted helper script must exist on the host, or the real container can't run it
+    -v) src=${2%%:*}
+        [[ $src != *.py || -f $src ]] || { echo "fake docker: mounted script $src not found" >&2; exit 97; }
+        shift ;;
     --name) name=$2; shift ;;
     -e) envs+=("$2"); shift ;;
     --entrypoint) entry=$2; shift ;;

@@ -1,6 +1,6 @@
 # v2: the second full run (`fullrun2000b`)
 
-v2 is the rerun of [v1](../v1/README.md), planned in [`../v2_plan.md`](../v2_plan.md). It ran on 2026-10-29 on one Lambda A10 from `main` at `5fe7566`, in one piece, with complete timing.
+v2 is the rerun of [v1](../v1/README.md), planned in [`v2_plan.md`](v2_plan.md). It ran on 2026-10-29 on one Lambda A10 from `main` at `5fe7566`, in one piece, with complete timing.
 
 Details live next to this file:
 - [`results.md`](results.md): data check, v1 agreement, WER by model and corruption, loops, the fallback pass, long clips, clip length.

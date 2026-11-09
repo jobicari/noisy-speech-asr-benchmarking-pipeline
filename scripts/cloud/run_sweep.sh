@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # Run the ASR container once per config (x REPEATS) on the Lambda instance and
 # record, per run: wall time, nvidia-smi samples, docker CPU/mem samples, logs.
-# Analyse afterwards with:  python3 analyze.py results/lambda_bench_runs/<sweep>/
+# Analyse afterwards with:  python3 scripts/cloud/analyze.py results/lambda_bench_runs/<sweep>/
 #
 # Usage (defaults shown; override any of them as env vars):
 #   CONFIGS="BATCH_SIZE=1 BATCH_SIZE=8 BATCH_SIZE=16 BATCH_SIZE=22" \
-#   REPEATS=2 N_INFERENCES=2200 ./run_sweep.sh
+#   REPEATS=2 N_INFERENCES=2200 ./scripts/cloud/run_sweep.sh
 #
 # A config is one or more VAR=value pairs joined by commas, e.g.
 #   "BATCH_SIZE=16,CHECKPOINT_SIZE=25"
 # Each pair is passed to the container with -e, overriding .env.docker.
+#
+# It works from the repo root, so relative paths (OUT_ROOT, ENV_FILE, KEY_FILE) are
+# relative to the repo root wherever it is started from.
 set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 IMAGE="${IMAGE:-asr-benchmark:lambda}"
 ENV_FILE="${ENV_FILE:-$HOME/noisy-speech-asr-benchmarking-pipeline/.env.docker}"
@@ -110,4 +115,4 @@ EOF
     printf '    exit=%s  wall=%.1fs  timing_lines=%s\n' "$rc" "$(awk "BEGIN{print $t1 - $t0}")" "$(wc -l < "$run_dir/timing.jsonl")"
   done
 done
-echo "Done. Analyse with: python3 analyze.py $SWEEP_DIR --price-per-hour <USD>"
+echo "Done. Analyse with: python3 scripts/cloud/analyze.py $SWEEP_DIR --price-per-hour <USD>"

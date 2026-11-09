@@ -1,6 +1,7 @@
 """Copy a run's final results pickle next to its logs in GCS, and verify the copy.
 
-Runs inside the benchmark image (it has google-cloud-storage), e.g.:
+Runs inside the benchmark image (it has google-cloud-storage), where
+scripts/cloud/run_and_terminate.sh mounts it at /app, e.g.:
     python copy_results.py results/transcribe_cache/<run_label>.pkl lambda_bench_runs/<sweep_id>/<run_id>
 The copy is made inside GCS (no download) to <dest_prefix>/<file name>, so a run's results
 and timing live in one folder and survive a cleanup of transcribe_cache/.

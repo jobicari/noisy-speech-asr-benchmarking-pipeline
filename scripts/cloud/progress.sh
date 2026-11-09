@@ -2,13 +2,14 @@
 # Show the progress of the run that is currently writing to a container.log.
 #
 # Usage:
-#   ./progress.sh                       # newest container.log under ./results/lambda_bench_runs
-#   ./progress.sh results/lambda_bench_runs/fullrun1      # newest log in that sweep
-#   ./progress.sh path/to/container.log
-#   watch -n 30 ./progress.sh           # refresh every 30 s (in a second tmux pane)
+#   ./scripts/cloud/progress.sh                  # newest container.log under <repo>/results/lambda_bench_runs
+#   ./scripts/cloud/progress.sh results/lambda_bench_runs/fullrun1   # newest log in that sweep
+#   ./scripts/cloud/progress.sh path/to/container.log
+#   watch -n 30 ./scripts/cloud/progress.sh      # refresh every 30 s (in a second tmux pane)
 set -euo pipefail
 
-target="${1:-${OUT_ROOT:-./results/lambda_bench_runs}}"
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+target="${1:-${OUT_ROOT:-$REPO_ROOT/results/lambda_bench_runs}}"
 if [[ -f "$target" ]]; then
   log="$target"
 else

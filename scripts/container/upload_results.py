@@ -1,6 +1,7 @@
 """Upload a local folder to GCS and verify every file arrived with the same size.
 
-Runs inside the benchmark image (it has google-cloud-storage), e.g.:
+Runs inside the benchmark image (it has google-cloud-storage), where
+scripts/cloud/run_and_terminate.sh mounts it at /app, e.g.:
     python upload_results.py /upload lambda_bench_runs/<sweep_id>
 Bucket and credentials come from GCS_BUCKET_NAME and GOOGLE_APPLICATION_CREDENTIALS.
 Exits non-zero if anything is missing, so callers can refuse to terminate the instance.

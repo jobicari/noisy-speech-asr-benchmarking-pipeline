@@ -1,6 +1,7 @@
 """Print the ids of samples that have at least one clip longer than a threshold.
 
-Runs inside the benchmark image (it has google-cloud-storage), e.g.:
+Runs inside the benchmark image (it has google-cloud-storage), where
+scripts/cloud/run_and_terminate.sh mounts it at /app, e.g.:
     python find_long_ids.py results/transcribe_cache/<run_label>.pkl [--min-duration 30]
 Reads the results pickle from GCS (GCS_BUCKET_NAME) or, if the path exists, from local disk.
 Prints the ids comma-separated on one line to stdout; everything else goes to stderr.

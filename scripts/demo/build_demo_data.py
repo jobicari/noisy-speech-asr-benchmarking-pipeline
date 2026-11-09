@@ -3,7 +3,7 @@
 
 Run from the repo root after downloading the v2 sweep folders (see analysis/v2/README.md):
 
-    python scripts/build_demo_data.py
+    python scripts/demo/build_demo_data.py
 
 The clips are listed in docs/demo/clips.json. They were picked automatically: among
 recordings of 7-13 s with 18-35 words, for each corruption the clip whose per-model WER

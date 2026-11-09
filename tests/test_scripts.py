@@ -1,5 +1,5 @@
-"""The helper scripts at the repo root: find_loop_clips.py, find_long_ids.py,
-copy_results.py (against a fake google-cloud-storage), analyze.py and run_config logging."""
+"""The helper scripts in scripts/container (find_loop_clips.py, find_long_ids.py, copy_results.py
+against a fake google-cloud-storage), scripts/cloud (analyze.py, progress.sh) and run_config logging."""
 import csv
 import importlib.util
 import json
@@ -19,6 +19,8 @@ from asr_pipeline_benchmark import utility
 from asr_pipeline_benchmark.configuration import Config
 
 REPO = tests.REPO
+CLOUD = REPO / "scripts" / "cloud"
+CONTAINER = REPO / "scripts" / "container"
 
 
 def read_csv(path):
@@ -49,13 +51,13 @@ class TestFindLoopClips(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "r.pkl"
             path.write_bytes(pickle.dumps(rows))
-            out = run_py(["find_loop_clips.py", str(path)])
+            out = run_py([str(CONTAINER / "find_loop_clips.py"), str(path)])
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), "a|BL_500_1000,b|WN_3snr")
         self.assertIn("3 looped Whisper transcripts, 2 clips in 2 samples", out.stderr)
 
     def test_threshold(self):
-        sys.path.insert(0, str(REPO))
+        sys.path.insert(0, str(CONTAINER))
         from find_loop_clips import compression_ratio
         self.assertLess(compression_ratio("he hoped there would be stew for dinner turnips and carrots"), 2.4)
         self.assertGreater(compression_ratio("i am a good man " * 5), 2.4)
@@ -69,7 +71,7 @@ class TestFindLongIds(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "r.pkl"
             path.write_bytes(pickle.dumps(rows))
-            out = run_py(["find_long_ids.py", str(path), "--min-duration", "30"])
+            out = run_py([str(CONTAINER / "find_long_ids.py"), str(path), "--min-duration", "30"])
         self.assertEqual(out.stdout.strip(), "a")
         self.assertIn("1 without duration_s", out.stderr)
 
@@ -118,7 +120,7 @@ class TestCopyResults(unittest.TestCase):
             (pkg / "storage.py").write_text(FAKE_GCS)
             state_path = Path(d) / "state.json"
             state_path.write_text(json.dumps(state))
-            out = run_py(["copy_results.py", key, dest],
+            out = run_py([str(CONTAINER / "copy_results.py"), key, dest],
                          env={"PYTHONPATH": d, "GCS_BUCKET_NAME": "test-bucket",
                               "FAKE_GCS_STATE": str(state_path)})
             return out, json.loads(state_path.read_text())
@@ -143,7 +145,7 @@ class TestCopyResults(unittest.TestCase):
 
 
 def load_analyze():
-    spec = importlib.util.spec_from_file_location("analyze", REPO / "analyze.py")
+    spec = importlib.util.spec_from_file_location("analyze", CLOUD / "analyze.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -196,7 +198,7 @@ class TestAnalyze(unittest.TestCase):
         sweep = self.tmp / "sweep"
         write_run(sweep / "ok", "ok")
         write_run(sweep / "bad", "bad", exit_code=1)
-        out = run_py(["analyze.py", str(sweep), "--price-per-hour", "1.29",
+        out = run_py([str(CLOUD / "analyze.py"), str(sweep), "--price-per-hour", "1.29",
                       "--target-inferences", "308000"])
         self.assertEqual(out.returncode, 0, out.stderr)
         for f in ("summary.csv", "runs.csv", "report.md", "report.html"):
@@ -210,7 +212,7 @@ class TestAnalyze(unittest.TestCase):
         write_run(self.tmp / "a/r1", "r1", exit_code=1, t=(0.0, 100.0), samples=("s0", "s1", "s2"))
         write_run(self.tmp / "b/r1", "r1", t=(200.0, 500.0), samples=("s2", "s3"))
         out_csv = self.tmp / "combined.csv"
-        out = run_py(["analyze.py", "--combine", str(self.tmp / "a"), str(self.tmp / "b"),
+        out = run_py([str(CLOUD / "analyze.py"), "--combine", str(self.tmp / "a"), str(self.tmp / "b"),
                       "--price-per-hour", "1.29", "--out", str(out_csv)])
         self.assertEqual(out.returncode, 0, out.stderr)
         total = read_csv(out_csv)[-1]
@@ -262,7 +264,7 @@ class TestProgress(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "container.log"
             p.write_text(log)
-            out = subprocess.run(["bash", str(REPO / "progress.sh"), str(p)], capture_output=True, text=True)
+            out = subprocess.run(["bash", str(CLOUD / "progress.sh"), str(p)], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("samples:    60/100", out.stdout)
         self.assertIn("models:     2", out.stdout)

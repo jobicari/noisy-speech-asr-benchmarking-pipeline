@@ -1,6 +1,7 @@
 """Print the clips where a Whisper model went into a repetition loop.
 
-Runs inside the benchmark image (it has google-cloud-storage), e.g.:
+Runs inside the benchmark image (it has google-cloud-storage), where
+scripts/cloud/run_and_terminate.sh mounts it at /app, e.g.:
     python find_loop_clips.py results/transcribe_cache/<run_label>.pkl [--min-ratio 2.4]
 Reads the results pickle from GCS (GCS_BUCKET_NAME) or, if the path exists, from local disk.
 A transcript counts as a loop when its text compresses more than --min-ratio times with

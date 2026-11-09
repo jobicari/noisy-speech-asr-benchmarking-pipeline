@@ -4,7 +4,7 @@
 Run from the repo root in the project env, with the v2 results pickle downloaded
 (see analysis/v2/README.md), and network access to the Hugging Face Hub:
 
-    SEED=123 PYTHONPATH=src python scripts/export_demo_clips.py
+    SEED=123 PYTHONPATH=src python scripts/demo/export_demo_clips.py
 
 It regenerates each corruption with the same seeds as fullrun2000b, so the audio is the
 audio the models heard. As a check, it recomputes the audio-health metrics of every

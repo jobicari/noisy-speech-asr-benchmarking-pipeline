@@ -1,4 +1,4 @@
-"""run_and_terminate.sh and run_sweep.sh end to end, with fake docker, nvidia-smi and
+"""scripts/cloud/run_and_terminate.sh and run_sweep.sh end to end, with fake docker, nvidia-smi and
 curl (tests/fakebin): detached start, main run, long-clip and looped-clip side runs,
 timing extraction, analyze, upload, results copy, notifications and the stall alert.
 Nothing is uploaded, terminated or sent."""
@@ -30,7 +30,7 @@ class WrapperRun(unittest.TestCase):
         (self.fake / "long_ids").write_text("s9\n")
         (self.fake / "loop_clips").write_text("s2|WN_3snr,s1|BL_500_1000,s1|none\n")
 
-    def run_wrapper(self, sweep="t1", detach="0", extra_docker="", **env):
+    def run_wrapper(self, sweep="t1", detach="0", extra_docker="", cwd=REPO, **env):
         e = {**os.environ,
              "PATH": f"{FAKEBIN}:{os.environ['PATH']}", "FAKE_DIR": str(self.fake),
              "SWEEP_ID": sweep, "OUT_ROOT": str(self.out), "ENV_FILE": str(self.tmp / "env"),
@@ -38,7 +38,7 @@ class WrapperRun(unittest.TestCase):
              "DETACH": detach, "NTFY_TOPIC": "test-topic", "CONFIGS": "SAMPLES_PER_CALL=1",
              "PER_RUN_ENV": f"RUN_POSTFIX={sweep}_{{run_id}},NUMBER_OF_SAMPLES=4,BATCH_SIZE=22",
              "EXTRA_DOCKER_ARGS": extra_docker, "GPU_SAMPLE_MS": "200", **env}
-        return subprocess.run(["./run_and_terminate.sh"], cwd=REPO, env=e,
+        return subprocess.run([str(REPO / "scripts" / "cloud" / "run_and_terminate.sh")], cwd=cwd, env=e,
                               capture_output=True, text=True, timeout=180)
 
     def pipeline_log(self, sweep="t1"):
@@ -66,6 +66,17 @@ class WrapperRun(unittest.TestCase):
 
 
 class TestFullFlow(WrapperRun):
+    def test_runs_from_outside_the_repo_root(self):
+        """The wrapper finds run_sweep.sh, analyze.py and the mounted helpers from its own folder"""
+        res = self.run_wrapper(cwd=self.tmp)
+        log = self.pipeline_log()
+        self.assertEqual(res.returncode, 0, log)
+        self.assertIn("Done (TERMINATE=0). main=ok side=1 loops=1", log)
+        self.assertTrue((self.out / "t1" / "report.md").exists())
+        calls = self.calls()
+        for script in ("find_long_ids.py", "find_loop_clips.py", "upload_results.py", "copy_results.py"):
+            self.assertTrue(any(c.startswith(script) for c in calls), script)
+
     def test_main_and_both_side_runs(self):
         res = self.run_wrapper()
         log = self.pipeline_log()
@@ -169,17 +180,17 @@ class TestFullFlow(WrapperRun):
 
 class TestScriptModes(unittest.TestCase):
     def test_shell_scripts_are_executable_in_git(self):
-        """A fresh clone must be able to run ./run_and_terminate.sh and ./run_sweep.sh"""
+        """A fresh clone must be able to run ./scripts/cloud/run_and_terminate.sh and run_sweep.sh"""
         out = subprocess.run(["git", "ls-files", "-s", "*.sh"], cwd=REPO, capture_output=True, text=True)
         modes = dict((l.split()[3], l.split()[0]) for l in out.stdout.splitlines())
-        self.assertGreaterEqual(set(modes), {"run_and_terminate.sh", "run_sweep.sh", "progress.sh"})
+        self.assertGreaterEqual(set(modes), {"scripts/cloud/run_and_terminate.sh", "scripts/cloud/run_sweep.sh", "scripts/cloud/progress.sh"})
         for name, mode in modes.items():
             self.assertEqual(mode, "100755", name)
 
 
 def extract_function(name):
     """The source of one shell function in run_and_terminate.sh"""
-    text = (REPO / "run_and_terminate.sh").read_text()
+    text = (REPO / "scripts" / "cloud" / "run_and_terminate.sh").read_text()
     m = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.S | re.M)
     return m.group(0)
 

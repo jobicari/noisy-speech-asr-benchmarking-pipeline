@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Summarise a sweep produced by run_sweep.sh and rank the configs.
+"""Summarise a sweep produced by scripts/cloud/run_sweep.sh and rank the configs.
 
 Stdlib only, so it runs on the Lambda host or a laptop without installs.
 
-    python3 analyze.py results/lambda_bench_runs/sweep_XXXX --price-per-hour 0.75 \
+    python3 scripts/cloud/analyze.py results/lambda_bench_runs/sweep_XXXX --price-per-hour 0.75 \
         --target-inferences 44000
 
 Writes summary.csv, report.md and report.html into the sweep directory.
 
 To add up a crashed run and its resume (totals, not averages):
 
-    python3 analyze.py --combine results/.../fullrun2000 results/.../fullrun2000_resume \
+    python3 scripts/cloud/analyze.py --combine results/.../fullrun2000 results/.../fullrun2000_resume \
         --price-per-hour 1.29 --out fullrun2000_combined.csv
 """
 import argparse

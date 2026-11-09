@@ -1,3 +1,8 @@
+# Local scratch files and git worktrees
+/tmp/
+/.tmp/
+/.worktree/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

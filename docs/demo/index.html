@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Noisy-Speech ASR Demo</title>
+<meta name="description" content="Listen to clean and damaged speech and compare what seven speech-recognition models wrote.">
+<style>
+:root {
+  --bg: #fcfcfb; --surface: #ffffff; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --line: #e1e0d9; --accent: #2a78d6; --accent-soft: #e6f0fc; --bad: #c2410c; --bad-soft: #fdeee6;
+  --ok: #15803d;
+  --ramp0: #e8f1fd; --ramp6: #0d366b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111110; --surface: #1a1a19; --ink: #f2f1ee; --ink2: #b9b8b2; --muted: #8b8a84;
+    --line: #2e2e2b; --accent: #6aa8f0; --accent-soft: #1b2b40; --bad: #f08a5d; --bad-soft: #3a2117;
+    --ok: #4ade80;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111110; --surface: #1a1a19; --ink: #f2f1ee; --ink2: #b9b8b2; --muted: #8b8a84;
+  --line: #2e2e2b; --accent: #6aa8f0; --accent-soft: #1b2b40; --bad: #f08a5d; --bad-soft: #3a2117;
+  --ok: #4ade80;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.01em; }
+h2 { font-size: 1.25rem; margin: 48px 0 8px; }
+p { margin: 0 0 12px; color: var(--ink2); max-width: 70ch; }
+a { color: var(--accent); }
+.lede { font-size: 1.08rem; }
+.small { font-size: 0.86rem; color: var(--muted); }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 16px; }
+.tabs button { font: inherit; font-size: 0.9rem; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink2); }
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.why { margin: 0 0 16px; color: var(--ink); }
+.players { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.players label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
+audio { width: 100%; }
+.missing { font-size: 0.85rem; color: var(--muted); padding: 10px 0; }
+.ref { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; }
+.ref b { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); display: block; }
+table { border-collapse: collapse; width: 100%; }
+.tx td, .tx th { overflow-wrap: anywhere; text-align: left; vertical-align: top; padding: 8px 8px; border-top: 1px solid var(--line); }
+.tx th { font-size: 0.8rem; color: var(--muted); font-weight: 600; border-top: 0; }
+.tx td.m { white-space: nowrap; font-weight: 600; width: 1%; }
+.tx td.w { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; width: 1%; }
+.tx td.avg { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; width: 1%; color: var(--muted); }
+.err { background: var(--bad-soft); color: var(--bad); border-radius: 3px; padding: 0 2px; }
+.tag { font-size: 0.75rem; border: 1px solid var(--bad); color: var(--bad); border-radius: 4px; padding: 0 5px; margin-left: 6px; }
+.fb { margin-top: 6px; font-size: 0.9rem; color: var(--ink2); }
+.more { color: var(--muted); font-style: italic; }
+.heat-wrap { overflow-x: auto; }
+.heat { font-size: 0.82rem; font-variant-numeric: tabular-nums; min-width: 640px; table-layout: fixed; }
+.heat th.row, .heat col.rowcol { width: 190px; }
+.heat th { font-weight: 600; color: var(--ink2); padding: 6px; text-align: center; }
+.heat th.row { text-align: right; white-space: nowrap; font-weight: 500; }
+.heat td { text-align: center; padding: 7px 4px; border: 2px solid var(--bg); }
+.toggle { display: inline-flex; gap: 4px; margin: 8px 0 12px; }
+.toggle button { font: inherit; font-size: 0.85rem; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink2); }
+.toggle button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+ul { color: var(--ink2); padding-left: 20px; max-width: 70ch; }
+footer { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 16px; }
+@media (max-width: 640px) {
+  h1 { font-size: 1.5rem; }
+  .players { grid-template-columns: 1fr; }
+  .tx thead { display: none; }
+  .tx tr { display: grid; grid-template-columns: 1fr auto; border-top: 1px solid var(--line); padding: 8px 0; }
+  .tx td { border-top: 0; padding: 2px 0; }
+  .tx td.m { grid-column: 1; grid-row: 1; width: auto; }
+  .tx td.w { grid-column: 2; grid-row: 1; width: auto; }
+  .tx td.t { grid-column: 1 / -1; grid-row: 2; }
+  .tx td.avg { display: none; }
+  .card { padding: 14px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>How speech recognition breaks on bad audio</h1>
+  <p class="lede">Listen to a recording before and after it was damaged, then read what seven speech-recognition models wrote. Words that don't match the reference are highlighted.</p>
+  <p class="small">From the <a href="https://github.com/jobicari/noisy-speech-asr-benchmarking-pipeline">Noisy-Speech ASR Benchmark</a>: 2,000 LibriSpeech recordings × 22 kinds of damage × 7 models, 308,000 transcriptions.</p>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <section class="card" id="clip" aria-live="polite"></section>
+  <p class="small" style="margin-top:12px">How these clips were chosen: automatically, not by hand. Among the 445 recordings of 7–13 s with 18–35 words, each damage type shows the clip whose per-model error rates are closest to that model's error rate over all 2,000 clips with that damage. For the 500–1000 Hz band, the choice was limited to clips where Whisper tiny loops, which happens on 27% of them.</p>
+
+  <h2>Every model on every kind of damage</h2>
+  <p>Word error rate (%) over all 2,000 recordings, sorted by Whisper large-v3. Darker is worse.</p>
+  <div class="toggle" role="group" aria-label="Error rate">
+    <button type="button" data-mode="capped" aria-pressed="true">Capped per clip</button>
+    <button type="button" data-mode="raw" aria-pressed="false">Raw</button>
+  </div>
+  <p class="small" id="mode-note"></p>
+  <div class="heat-wrap"><table class="heat" id="heat"></table></div>
+
+  <h2>What this doesn't show</h2>
+  <ul>
+    <li>One kind of speech: read English audiobooks (LibriSpeech test-clean), recorded fairly cleanly.</li>
+    <li>The damage is generated, not recorded. The room reverb uses one measured impulse response.</li>
+    <li>Each damage type was generated once, with one seed, and the error rates have no confidence intervals. Small gaps between models are ties, not rankings.</li>
+    <li>All models used greedy decoding through Hugging Face Transformers.</li>
+  </ul>
+
+  <footer>
+    <p class="small">Audio: <a href="https://www.openslr.org/12">LibriSpeech</a> (Panayotov et al., 2015), CC BY 4.0, read from LibriVox recordings. The damaged versions were regenerated with the benchmark's own code and seeds, so they are the audio the models heard (checked against the metrics stored for each clip). A clip whose peak would exceed full scale was turned down to fit a 16-bit file.</p>
+    <p class="small">Analysis and code: <a href="https://github.com/jobicari/noisy-speech-asr-benchmarking-pipeline">github.com/jobicari/noisy-speech-asr-benchmarking-pipeline</a></p>
+  </footer>
+</main>
+
+<script>
+const LABEL = {
+  "none": "Clean audio", "codec_8k": "Opus codec, 8 kbps", "codec_6k": "Opus codec, 6 kbps",
+  "PL_40_.1": "Packet loss, 10%", "PL_30_.2": "Packet loss, 20%", "PL_20_.3": "Packet loss, 30%",
+  "PL_10_.4": "Packet loss, 40%", "PL_5_.5": "Packet loss, 50%",
+  "clip_1": "Clipping, 10% of peak", "clip_05": "Clipping, 5% of peak", "clip_025": "Clipping, 2.5% of peak",
+  "clipN_1": "Clipping, 10%, normalised", "clipN_05": "Clipping, 5%, normalised", "clipN_025": "Clipping, 2.5%, normalised",
+  "SV_0.5": "Synthetic reverb", "RV_0.5_251": "Real room reverb", "SDO_8_100_15": "Dropouts (8 × 100 ms)",
+  "WN_3snr": "White noise, 3 dB SNR", "BL_800_3000": "Band limit 800–3000 Hz",
+  "BL_600_2000": "Band limit 600–2000 Hz", "BL_500_1000": "Band limit 500–1000 Hz",
+  "WN_3-SV_.5-SDO_8_100_15": "Noise + reverb + dropouts"
+};
+const MODEL = { "tiny": "Whisper tiny", "base": "Whisper base", "small": "Whisper small", "medium": "Whisper medium",
+  "turbo": "Whisper large-v3-turbo", "large-v3": "Whisper large-v3", "wav2vec2": "wav2vec2-large" };
+const WHY = {
+  "none": "The baseline. On clean read speech every model is close to perfect; the smaller Whisper models make a few more slips.",
+  "codec_6k": "A very low-bitrate voice codec, like a bad video call. Mild for everyone except the smallest models.",
+  "RV_0.5_251": "A real room's echo, from a measured impulse response. Small models and wav2vec2 start to slip.",
+  "clip_025": "Hard clipping at 2.5% of the peak, like a badly overloaded input. Whisper copes; wav2vec2 does much worse.",
+  "PL_5_.5": "Half of all 5 ms packets dropped to silence. Whisper fills the gaps from context; wav2vec2, which reads each slice of sound on its own, collapses.",
+  "WN_3snr": "White noise almost as loud as the voice (3 dB signal-to-noise ratio). Accuracy now tracks model size closely.",
+  "BL_800_3000": "Only 800–3000 Hz kept, roughly a phone line. Fine from Whisper small up.",
+  "BL_500_1000": "Only 500–1000 Hz kept, which removes most consonants. Every model fails, and Whisper tiny falls into a repetition loop. Temperature fallback, a decoding retry, stops the loop but doesn't recover the words."
+};
+
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// Mark hypothesis words that are not part of the longest common subsequence with the reference.
+function markWords(ref, hyp, maxWords) {
+  const r = ref.split(" ").filter(Boolean), h = hyp.split(" ").filter(Boolean);
+  const shown = h.slice(0, maxWords);
+  const n = r.length, m = shown.length;
+  const dp = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = r[i] === shown[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const keep = new Array(m).fill(false);
+  for (let i = 0, j = 0; i < n && j < m;) {
+    if (r[i] === shown[j]) { keep[j] = true; i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++; else j++;
+  }
+  let html = shown.map((w, k) => keep[k] ? esc(w) : `<span class="err">${esc(w)}</span>`).join(" ");
+  if (h.length > maxWords) html += ` <span class="more">… ${h.length - maxWords} more words</span>`;
+  return html || '<span class="more">(empty)</span>';
+}
+
+let DATA;
+function showClip(i) {
+  const c = DATA.clips[i];
+  document.querySelectorAll("#tabs button").forEach((b, k) => b.setAttribute("aria-selected", k === i));
+  const clean = `audio/${c.id}__none.wav`, bad = `audio/${c.id}__${c.corr_type}.wav`;
+  const player = (label, src) => `<div><label>${label}</label><audio controls preload="none" src="${src}"></audio></div>`;
+  const rows = c.models.map(m => {
+    let cell = markWords(c.ref, m.hyp, 45);
+    if (m.loop) cell += '<span class="tag">loop</span>';
+    if (m.fallback) cell += `<div class="fb">With temperature fallback (${m.fallback.wer.toFixed(1)}% WER): ${markWords(c.ref, m.fallback.hyp, 45)}</div>`;
+    return `<tr><td class="m">${MODEL[m.model]}</td><td class="t">${cell}</td><td class="w">${m.wer.toFixed(1)}%</td><td class="avg">${m.corpus_capped.toFixed(1)}%</td></tr>`;
+  }).join("");
+  document.getElementById("clip").innerHTML = `
+    <p class="why">${WHY[c.corr_type] || ""}</p>
+    <div class="players">
+      ${player("Original recording", clean)}
+      ${c.corr_type === "none" ? "" : player(LABEL[c.corr_type], bad)}
+    </div>
+    <div class="ref"><b>Reference transcript</b>${esc(c.ref)}</div>
+    <table class="tx">
+      <thead><tr><th>Model</th><th>What it wrote</th><th class="w">WER</th><th class="avg" title="Capped word error rate of this model over all 2,000 clips with this damage">All clips</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="small" style="margin:10px 0 0">WER is this clip's word error rate. "All clips" is the model's capped error rate over all 2,000 recordings with the same damage. Transcripts are shown after text normalisation (lowercase, no punctuation).</p>`;
+  document.querySelectorAll("#clip audio").forEach(a => a.addEventListener("error", () => {
+    a.replaceWith(Object.assign(document.createElement("div"), { className: "missing", textContent: "Audio not available." }));
+  }));
+}
+
+function color(v) {
+  // log-ish scale from 1.5% to 100%
+  const t = Math.max(0, Math.min(1, Math.log(Math.max(v, 1.5) / 1.5) / Math.log(100 / 1.5)));
+  const a = [232, 241, 253], b = [13, 54, 107];
+  const mix = a.map((x, k) => Math.round(x + (b[k] - x) * t));
+  return { bg: `rgb(${mix})`, fg: t > 0.5 ? "#fff" : "#0b0b0b" };
+}
+function showHeat(mode) {
+  const h = DATA.heatmap, vals = h[mode];
+  document.querySelectorAll(".toggle button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+  document.getElementById("mode-note").textContent = mode === "capped"
+    ? "Each clip's errors are capped at its number of reference words, so a transcript that loops counts as 100% wrong, not 1,500%."
+    : "Raw corpus WER: all errors over all reference words. Repetition loops push it far above 100% for the small models.";
+  const head = `<tr><th></th>${h.models.map(m => `<th>${MODEL[m].replace("Whisper ", "")}</th>`).join("")}</tr>`;
+  const body = h.corruptions.map((c, i) => `<tr><th class="row">${LABEL[c]}</th>${vals[i].map((v, j) => {
+    const col = color(v);
+    return `<td style="background:${col.bg};color:${col.fg}" title="${MODEL[h.models[j]]}, ${LABEL[c]}: ${v}%">${v >= 10 ? Math.round(v) : v.toFixed(1)}</td>`;
+  }).join("")}</tr>`).join("");
+  document.getElementById("heat").innerHTML = `<colgroup><col class="rowcol">${h.models.map(() => "<col>").join("")}</colgroup><thead>${head}</thead><tbody>${body}</tbody>`;
+}
+
+fetch("data.json").then(r => r.json()).then(d => {
+  DATA = d;
+  const tabs = document.getElementById("tabs");
+  d.clips.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("role", "tab"); b.textContent = LABEL[c.corr_type];
+    b.addEventListener("click", () => showClip(i));
+    tabs.appendChild(b);
+  });
+  document.querySelectorAll(".toggle button").forEach(b => b.addEventListener("click", () => showHeat(b.dataset.mode)));
+  showClip(0); showHeat("capped");
+});
+</script>
+</body>
+</html>

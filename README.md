@@ -60,7 +60,7 @@ A pipeline that takes a benchmark from a workstation to a cloud GPU run:
 
 ![Wall time of the same test run through each tuning step](docs/figures/pipeline_speedups.png)
 
-- **Tested.** 45 tests cover the configuration, the models' batching and the cloud scripts, without needing a GPU, network or credentials.
+- **Tested.** 46 tests cover the configuration, the models' batching and the cloud scripts, without needing a GPU, network or credentials.
 
 **Stack:** Python, PyTorch, Hugging Face Transformers, MLX (Apple Silicon), NumPy, librosa, jiwer, Docker, Bash, Google Cloud Storage, Lambda Labs.
 
@@ -70,7 +70,7 @@ A pipeline that takes a benchmark from a workstation to a cloud GPU run:
 |---|---|
 | [`src/asr_pipeline_benchmark/`](src/asr_pipeline_benchmark/) | The pipeline: corruptions, audio-health metrics, models, checkpointing, storage |
 | [`app.py`](app.py) | Entry point for one benchmark run |
-| `run_and_terminate.sh`, `run_sweep.sh` | Cloud runs and benchmark sweeps |
+| [`scripts/`](scripts/) | Cloud runs and sweeps, the helpers they run in the container, and the demo page builders ([what each one does](scripts/README.md)) |
 | [`analysis/`](analysis/) | Results and timing analysis of the full runs, and the scripts that compute them |
 | [`docs/figures/`](docs/figures/) | The figures above |
 | [`tests/`](tests/) | Test suite |

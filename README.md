@@ -16,6 +16,8 @@
 
 The error rate for every model and corruption is in [this heatmap](docs/figures/wer_by_corruption.png). The full analysis is in [`analysis/v2/`](analysis/v2/README.md).
 
+**[Listen to examples](https://jobicari.github.io/noisy-speech-asr-benchmarking-pipeline/demo/)**: clean and damaged recordings side by side, with what each model wrote ([source](docs/demo/)).
+
 ## At a glance
 
 | | |
